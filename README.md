@@ -1,6 +1,6 @@
 # Glass Sketchbook
 
-A 3D sketchbook for planning furnace-blown glass. Shape a piece the way you would at the bench: draw one side of the bubble's silhouette and it spins into the full form, then paddle it flat, square it up, add bits (spikes, pulled horns, spouts), cut an opening (straight or tilted) with a fire-polished or ground-flat lip, and pick colors and wraps. You can upload a photo of a pencil sketch to trace over.
+A 3D sketchbook for planning furnace-blown glass. Shape a piece the way you would at the bench: draw one side of the bubble's silhouette and it spins into the full form, then paddle it flat, square it up, add bits (spikes, pulled horns, spouts), cut an opening (straight or tilted) with a fire-polished or ground-flat lip, and pick colors and wraps. When it's ready, save an orthographic drawing sheet (front, side and top at one true scale, shaded, outlined or both, with real dimensions) as a PNG. You can upload a photo of a pencil sketch to trace over.
 
 ## Run it
 
@@ -21,6 +21,7 @@ It's a single file with no build step. Open `index.html` in a browser.
 - The lathe is built one meridian at a time so each can end exactly on the cut plane; any fully open mouth gets a lip (a round bead for fire-polished, a frosted flat band for ground)
 - The donut body is a torus with a neck cylinder
 - Bits are tapered tubes swept along a curve
+- Drawings use orthographic cameras sharing one scale; the outline style renders part IDs and surface normals offscreen and inks wherever the part changes or the surface folds
 - Your last design is saved in the browser's localStorage; sketch photos are not saved
 
 ## Ideas for later

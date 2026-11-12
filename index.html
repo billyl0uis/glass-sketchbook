@@ -83,6 +83,17 @@ label.file input{position:absolute; opacity:0; width:1px; height:1px}
   #panel{flex:0 0 400px; border-top:0; border-left:1px solid var(--line)}
   .pe{height:330px}
 }
+dialog{border:1px solid var(--line); border-radius:14px; background:var(--panel); color:var(--ink); padding:0; width:min(780px,calc(100vw - 32px)); max-height:calc(100vh - 32px)}
+dialog::backdrop{background:rgba(10,15,20,.45)}
+.dlg{padding:16px 18px}
+.dlg h2{margin:0 0 2px; font-size:17px; font-weight:700}
+.dlg .opts{display:grid; grid-template-columns:1fr 1fr; gap:0 16px}
+.dlg .opts .wide{grid-column:1/-1}
+.dlg img{width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; margin-top:8px; display:block; min-height:80px}
+.dlg-actions{display:flex; justify-content:flex-end; align-items:center; gap:14px; margin-top:12px}
+.primary{background:var(--accent); color:var(--accent-ink); border:0; border-radius:9px; padding:8px 16px; font-weight:600}
+.num input{width:100%; font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink)}
+@media (max-width:560px){ .dlg .opts{grid-template-columns:1fr} }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -100,6 +111,7 @@ label.file input{position:absolute; opacity:0; width:1px; height:1px}
   <div id="stage">
     <img id="behind" alt="">
     <div class="stage-tools">
+      <button id="drawBtn">Drawing</button>
       <button id="spinBtn" aria-pressed="false">Spin</button>
       <button id="viewBtn">Reset view</button>
     </div>
@@ -113,6 +125,18 @@ label.file input{position:absolute; opacity:0; width:1px; height:1px}
     <div id="content"></div>
   </section>
 </main>
+<dialog id="drawDlg" aria-labelledby="drawTitle">
+  <form method="dialog" class="dlg">
+    <h2 id="drawTitle">Orthographic drawing</h2>
+    <p class="hint" style="margin:0">Front, side and top views at one true scale, with no perspective, so you can measure straight off the sheet.</p>
+    <div class="opts" id="drawOpts"></div>
+    <img id="drawPrev" alt="Preview of the drawing sheet">
+    <div class="dlg-actions">
+      <button class="linkbtn" value="close">Close</button>
+      <button type="button" class="primary" id="drawSave">Save PNG</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -129,7 +153,8 @@ const DEFAULT = {
   donut:{R:.62,tube:.42,tall:1.08,flatten:.32,neckH:.55,neckW:.42},
   bits:{count:0,mode:'ring',shape:'spike',at:.8,from:.3,to:.7,len:.5,size:.12,curl:0},
   color:'clear', wraps:0, wrapColor:'opal',
-  open:{cut:0,tilt:0,lip:'fire'}
+  open:{cut:0,tilt:0,lip:'fire'},
+  draw:{style:'both',height:20,unit:'cm'}
 };
 const PRESETS = {
   onion:{profile:[[0,0],[.6,.02],[.92,.3],[.88,.72],[.5,1.08],[.16,1.32],[.04,1.55]],
@@ -397,9 +422,9 @@ function slider(label,get,set,min,max,step,fmt=v=>(+v).toFixed(2),after){
   inp.oninput=()=>{ set(+inp.value); out.textContent=fmt(+inp.value); (after||schedule)(); };
   return h('div',{class:'row'}, h('label',{class:'lbl',for:id}, h('span',{text:label}), out), inp);
 }
-function seg(label,opts,get,set){
+function seg(label,opts,get,set,after){
   return h('div',{class:'row'}, h('span',{class:'seg-label',text:label}),
-    h('div',{class:'seg',role:'group','aria-label':label}, opts.map(([v,t])=>h('button',{'aria-pressed':String(get()===v),text:t,onclick:()=>{set(v); schedule(); render();}}))));
+    h('div',{class:'seg',role:'group','aria-label':label}, opts.map(([v,t])=>h('button',{type:'button','aria-pressed':String(get()===v),text:t,onclick:()=>{set(v); if(after) after(); else {schedule(); render();}}}))));
 }
 function swatches(get,set){
   return h('div',{class:'swatches'}, Object.entries(COLORS).map(([k,c])=>{
@@ -545,9 +570,142 @@ function setupPE(cv){
   new ResizeObserver(draw).observe(cv);
 }
 
+/* ---------- orthographic drawing ---------- */
+const CELL=640, INK='#1d2830', FAINT='#8a969e';
+let dRen=null, sheet=null;
+function offRenderer(){
+  if(!dRen){ dRen=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
+    dRen.outputEncoding=THREE.sRGBEncoding; dRen.setPixelRatio(1); dRen.setSize(CELL,CELL,false); }
+  return dRen;
+}
+// One shared scale (k px per unit) for every view, so the sheet measures true.
+function orthoViews(){
+  const box=new THREE.Box3().setFromObject(piece), size=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
+  const k=CELL/(Math.max(size.x,size.y,size.z)*1.4), half=CELL/(2*k), Y=new THREE.Vector3(0,1,0);
+  const cam=(off,up)=>{ const c=new THREE.OrthographicCamera(-half,half,half,-half,0.01,100);
+    c.position.copy(ctr).add(off); c.up.copy(up); c.lookAt(ctr); c.updateMatrixWorld(); return c; };
+  return {k,size,views:[
+    {name:'Front',cam:cam(new THREE.Vector3(0,0,20),Y),w:size.x,h:size.y},
+    {name:'Side', cam:cam(new THREE.Vector3(20,0,0),Y),w:size.z,h:size.y},
+    {name:'Top',  cam:cam(new THREE.Vector3(0,20,0),new THREE.Vector3(0,0,-1)),w:size.x,h:size.z}]};
+}
+// Outline style: render flat part IDs and surface normals, then ink every pixel where
+// the part changes (silhouettes, bits against the body, lips) or the surface folds sharply
+// (the inside wall showing through an opening).
+function outlineCell(cam){
+  const r=offRenderer(), rt=new THREE.WebGLRenderTarget(CELL,CELL), meshes=piece.children, orig=meshes.map(m=>m.material);
+  const read=()=>{ const b=new Uint8Array(CELL*CELL*4); r.setRenderTarget(rt); r.setClearColor(0x000000,0); r.clear();
+    r.render(scene,cam); r.readRenderTargetPixels(rt,0,0,CELL,CELL,b); r.setRenderTarget(null); return b; };
+  const idMats=meshes.map((m,i)=>new THREE.MeshBasicMaterial({color:new THREE.Color().setRGB(((i+1)*7%256)/255,((i+1)*13%256)/255,.5),side:THREE.DoubleSide}));
+  meshes.forEach((m,i)=>m.material=idMats[i]); const ids=read();
+  const nm=new THREE.MeshNormalMaterial({side:THREE.DoubleSide});
+  meshes.forEach(m=>m.material=nm); const nrm=read();
+  meshes.forEach((m,i)=>m.material=orig[i]); idMats.forEach(m=>m.dispose()); nm.dispose(); rt.dispose();
+
+  const img=new ImageData(CELL,CELL), o=img.data, tint=new THREE.Color(COLORS[S.color].hex);
+  const tr=Math.round(tint.r*255), tg=Math.round(tint.g*255), tb=Math.round(tint.b*255);
+  const px=(x,y)=>((CELL-1-y)*CELL+x)*4; // GL rows run bottom-up
+  const dot=(i,j)=>{ let s=0; for(let c=0;c<3;c++) s+=(nrm[i+c]/127.5-1)*(nrm[j+c]/127.5-1); return s; };
+  const ink=(x,y)=>{ for(let dy=0;dy<2;dy++)for(let dx=0;dx<2;dx++){ if(x+dx>=CELL||y+dy>=CELL) continue;
+    const q=((y+dy)*CELL+x+dx)*4; o[q]=29;o[q+1]=40;o[q+2]=48;o[q+3]=255; } };
+  for(let y=0;y<CELL-1;y++) for(let x=0;x<CELL-1;x++){
+    const i=px(x,y), obj=ids[i+3]>0; let edge=false;
+    for(const j of [px(x+1,y),px(x,y+1)]){
+      const objJ=ids[j+3]>0;
+      if(obj!==objJ || (obj && (ids[j]!==ids[i]||ids[j+1]!==ids[i+1])) || (obj && dot(i,j)<0.55)){ edge=true; break; }
+    }
+    if(edge) ink(x,y);
+    else if(obj){ const q=(y*CELL+x)*4; if(!o[q+3]){ o[q]=tr;o[q+1]=tg;o[q+2]=tb;o[q+3]=34; } }
+  }
+  const c=document.createElement('canvas'); c.width=c.height=CELL; c.getContext('2d').putImageData(img,0,0); return c;
+}
+function shadedCell(cam){
+  const r=offRenderer(); r.setRenderTarget(null); r.setClearColor(0x000000,0); r.clear(); r.render(scene,cam); return r.domElement;
+}
+
+/* drafting marks */
+function centerLine(g,x1,y1,x2,y2){ g.save(); g.strokeStyle=FAINT; g.lineWidth=1.5; g.setLineDash([22,6,4,6]);
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke(); g.restore(); }
+function dimLine(g,ax,ay,bx,by,label,vertical){
+  g.save(); g.strokeStyle=INK; g.fillStyle=INK; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(ax,ay); g.lineTo(bx,by); g.stroke();
+  const tick=(x,y)=>{ g.beginPath(); g.moveTo(x-8,y+8); g.lineTo(x+8,y-8); g.stroke(); }; // architectural slash
+  tick(ax,ay); tick(bx,by);
+  g.font='600 22px "Bricolage Grotesque",system-ui,sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  const mx=(ax+bx)/2, my=(ay+by)/2, w=g.measureText(label).width+14;
+  g.translate(mx,my); if(vertical) g.rotate(-Math.PI/2);
+  g.fillStyle='#ffffff'; g.fillRect(-w/2,-14,w,28); g.fillStyle=INK; g.fillText(label,0,1);
+  g.restore();
+}
+function extLine(g,x1,y1,x2,y2){ g.save(); g.strokeStyle=FAINT; g.lineWidth=1; g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke(); g.restore(); }
+
+async function makeSheet(){
+  try{ await document.fonts.ready; }catch(e){}
+  const D=S.draw, {k,size,views}=orthoViews();
+  const per = D.height>0 ? D.height/size.y : 0;   // real units per model unit
+  const fmt=v=> per ? (v*per).toFixed(1)+' '+D.unit : '';
+  const rows = D.style==='both' ? ['shaded','outline'] : [D.style];
+  const M=60, G=40, HEAD=120, ROWH=CELL+60;
+  const W=M*2+CELL*3+G*2, H=HEAD+rows.length*ROWH+40;
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);
+  g.fillStyle=INK; g.textBaseline='alphabetic';
+  g.font='750 40px "Bricolage Grotesque",system-ui,sans-serif'; g.fillText('Glass Sketchbook',M,M+12);
+  g.font='400 22px "Bricolage Grotesque",system-ui,sans-serif'; g.fillStyle=FAINT;
+  const desc=[S.body==='bubble'?'Blown bubble':'Blown donut', COLORS[S.color].n+' glass', per?'height '+fmt(size.y):'unscaled'];
+  g.fillText('Orthographic views · '+desc.join(' · '),M,M+48);
+  g.textAlign='right'; g.fillText(new Date().toLocaleDateString(),W-M,M+12); g.textAlign='left';
+
+  const shadowWas=shadow.visible; shadow.visible=false;
+  rows.forEach((style,ri)=>views.forEach((v,vi)=>{
+    const x0=M+vi*(CELL+G), y0=HEAD+ri*ROWH, cx=x0+CELL/2, cy=y0+CELL/2;
+    if(style==='shaded'){
+      const gr=g.createRadialGradient(cx,y0+CELL*.35,20,cx,cy,CELL*.75); gr.addColorStop(0,'#f4f7f8'); gr.addColorStop(1,'#d3dbe0');
+      g.fillStyle=gr; g.fillRect(x0,y0,CELL,CELL); g.drawImage(shadedCell(v.cam),x0,y0,CELL,CELL);
+    } else g.drawImage(outlineCell(v.cam),x0,y0);
+    g.strokeStyle='#cbd3d8'; g.lineWidth=1; g.strokeRect(x0+.5,y0+.5,CELL-1,CELL-1);
+    const hw=v.w*k/2, hh=v.h*k/2, L=cx-hw, R=cx+hw, T=cy-hh, B=cy+hh;
+    // centerlines: the piece's spin axis in front and side, crosshair on top
+    if(v.name==='Top'){ centerLine(g,cx,T-24,cx,B+24); centerLine(g,L-24,cy,R+24,cy); }
+    else centerLine(g,cx,T-30,cx,B+24);
+    if(per){
+      if(v.name!=='Top'){ const dy=B+40; extLine(g,L,B+6,L,dy+10); extLine(g,R,B+6,R,dy+10); dimLine(g,L,dy,R,dy,fmt(v.w),false); }
+      if(v.name==='Front'){ const dx=L-40; extLine(g,L-6,T,dx-10,T); extLine(g,L-6,B,dx-10,B); dimLine(g,dx,T,dx,B,fmt(v.h),true); }
+    }
+    g.fillStyle=INK; g.font='600 24px "Bricolage Grotesque",system-ui,sans-serif';
+    g.fillText(v.name+(rows.length>1?(style==='shaded'?' · shaded':' · outline'):''),x0,y0+CELL+34);
+  }));
+  shadow.visible=shadowWas;
+  if(per){ // scale bar: one real unit (or 5, if one is tiny)
+    const unitPx=k/per, n=unitPx<30?5:1, len=unitPx*n, x=W-M-len, y=H-30;
+    g.strokeStyle=INK; g.lineWidth=3; g.beginPath(); g.moveTo(x,y); g.lineTo(x+len,y); g.stroke();
+    g.lineWidth=1.5; [x,x+len].forEach(t=>{g.beginPath(); g.moveTo(t,y-8); g.lineTo(t,y+8); g.stroke();});
+    g.fillStyle=INK; g.font='400 20px "Bricolage Grotesque",system-ui,sans-serif'; g.textAlign='right'; g.fillText(n+' '+D.unit,x-12,y+7); g.textAlign='left';
+  }
+  return c;
+}
+
+const drawDlg=document.getElementById('drawDlg'), drawPrev=document.getElementById('drawPrev');
+let prevT;
+function refreshDrawing(){ clearTimeout(prevT); prevT=setTimeout(async()=>{ sheet=await makeSheet(); drawPrev.src=sheet.toDataURL('image/png'); },60); }
+function renderDrawOpts(){
+  const D=S.draw, box=document.getElementById('drawOpts'); box.innerHTML='';
+  const after=()=>{ save(); renderDrawOpts(); refreshDrawing(); };
+  const style=seg('Style',[['shaded','Shaded'],['outline','Outline'],['both','Both']],()=>D.style,v=>D.style=v,after); style.classList.add('wide');
+  const units=seg('Units',[['cm','cm'],['in','in']],()=>D.unit,v=>D.unit=v,after);
+  const inp=h('input',{type:'number',id:'drawH',min:'0',step:'0.5',value:D.height||'',inputmode:'decimal'});
+  inp.oninput=()=>{ D.height=Math.max(0,+inp.value||0); save(); refreshDrawing(); };
+  box.append(style, units, h('div',{class:'row num'}, h('label',{class:'seg-label',for:'drawH',text:'Real height of the piece (blank for no measurements)'}), inp));
+}
+document.getElementById('drawBtn').onclick=()=>{ renderDrawOpts(); drawPrev.removeAttribute('src'); drawDlg.showModal(); refreshDrawing(); };
+document.getElementById('drawSave').onclick=()=>{ if(!sheet) return;
+  sheet.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b);
+    a.download='glass-sketchbook-'+S.body+'-orthographic.png'; document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000); },'image/png'); };
+
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   tab=b.dataset.tab; document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',String(x===b))); peDraw=null; render(); });
-document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ S=fromPreset(b.dataset.preset); piece.position.set(0,0,0); rebuild(); save(); dist=fitDist; render(); });
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ const keepDraw=S.draw; S=fromPreset(b.dataset.preset); S.draw=keepDraw; piece.position.set(0,0,0); rebuild(); save(); dist=fitDist; render(); });
 
 resize(); rebuild(); dist=fitDist; render(); loop();
 </script>
