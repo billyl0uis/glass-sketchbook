@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Glass Sketchbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,750&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#e4e9ec; --panel:#f5f7f8; --ink:#1d2830; --muted:#5d6b75; --line:#cbd3d8;
+  --accent:#b4561a; --accent-ink:#ffffff; --stage1:#f2f5f7; --stage2:#c9d3d9; --field:#e9eef1;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#131a1f; --panel:#1b242b; --ink:#e3e9ed; --muted:#92a0aa; --line:#2e3a44;
+    --accent:#ee8d3e; --accent-ink:#1b1006; --stage1:#26323b; --stage2:#0f1519; --field:#232e36;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#131a1f; --panel:#1b242b; --ink:#e3e9ed; --muted:#92a0aa; --line:#2e3a44;
+  --accent:#ee8d3e; --accent-ink:#1b1006; --stage1:#26323b; --stage2:#0f1519; --field:#232e36;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  display:flex; flex-direction:column; overflow:hidden; font-size:15px; line-height:1.4;
+}
+header{display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel)}
+h1{font-size:19px; font-weight:750; letter-spacing:-0.01em; margin:0; white-space:nowrap}
+.presets{display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; flex:1}
+.presets::-webkit-scrollbar{display:none}
+button{font:inherit; color:inherit; cursor:pointer}
+.chip{border:1px solid var(--line); background:transparent; border-radius:999px; padding:5px 12px; white-space:nowrap; font-size:14px}
+.chip:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,label.file:focus-within{outline:2px solid var(--accent); outline-offset:2px}
+main{flex:1; display:flex; flex-direction:column; min-height:0}
+#stage{position:relative; flex:1 1 50%; min-height:220px; background:radial-gradient(ellipse at 50% 35%, var(--stage1), var(--stage2)); overflow:hidden; touch-action:none}
+#stage canvas{display:block; width:100%; height:100%; position:relative; z-index:1}
+#behind{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none; z-index:0; display:none}
+.stage-tools{position:absolute; right:10px; bottom:10px; display:flex; gap:6px; z-index:2}
+.stage-tools button{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 10px; font-size:13px}
+.stage-tools button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+#panel{flex:1 1 50%; min-height:0; display:flex; flex-direction:column; background:var(--panel); border-top:1px solid var(--line)}
+.tabs{display:flex; border-bottom:1px solid var(--line)}
+.tabs button{flex:1; background:none; border:0; padding:10px 0; font-weight:600; color:var(--muted); border-bottom:2px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--accent)}
+#content{overflow-y:auto; padding:12px 14px 24px; flex:1}
+.row{margin:12px 0}
+.row label.lbl{display:flex; justify-content:space-between; font-size:14px; margin-bottom:4px}
+.row output{color:var(--muted); font-variant-numeric:tabular-nums}
+input[type=range]{width:100%; accent-color:var(--accent)}
+.seg{display:flex; border:1px solid var(--line); border-radius:9px; overflow:hidden}
+.seg button{flex:1; border:0; background:transparent; padding:7px 4px; font-size:14px}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink); font-weight:600}
+.seg-label{font-size:14px; margin-bottom:4px; display:block}
+.pe{position:relative; height:270px; background:var(--field); border-radius:10px; overflow:hidden}
+.pe canvas{width:100%; height:100%; display:block; touch-action:none}
+.hint{font-size:13px; color:var(--muted); margin:6px 0 0}
+.section{margin-top:18px; padding-top:12px; border-top:1px solid var(--line)}
+.section h2{font-size:15px; margin:0 0 6px; font-weight:650}
+.swatches{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+.sw{border:1px solid var(--line); background:transparent; border-radius:10px; padding:8px 4px 6px; display:flex; flex-direction:column; align-items:center; gap:4px; font-size:12px}
+.sw i{width:26px; height:26px; border-radius:50%; display:block; border:1px solid rgba(127,127,127,.35)}
+.sw[aria-pressed="true"]{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent)}
+label.file{display:inline-block; border:1px solid var(--accent); color:var(--accent); border-radius:9px; padding:7px 14px; cursor:pointer; font-weight:600}
+label.file input{position:absolute; opacity:0; width:1px; height:1px}
+.check{display:flex; gap:8px; align-items:center; font-size:14px; margin-top:10px}
+.linkbtn{background:none; border:0; color:var(--muted); text-decoration:underline; padding:0; margin-left:12px; font-size:14px}
+@media (min-width:900px){
+  main{flex-direction:row}
+  #stage{flex:1 1 auto}
+  #panel{flex:0 0 400px; border-top:0; border-left:1px solid var(--line)}
+  .pe{height:330px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Glass Sketchbook</h1>
+  <div class="presets" aria-label="Start from">
+    <button class="chip" data-preset="onion">Onion</button>
+    <button class="chip" data-preset="flask">Flask with spouts</button>
+    <button class="chip" data-preset="donut">Spiked donut</button>
+    <button class="chip" data-preset="tank">Squared tank</button>
+  </div>
+</header>
+<main>
+  <div id="stage">
+    <img id="behind" alt="">
+    <div class="stage-tools">
+      <button id="spinBtn" aria-pressed="false">Spin</button>
+      <button id="viewBtn">Reset view</button>
+    </div>
+  </div>
+  <section id="panel">
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="shape" aria-selected="true">Shape</button>
+      <button role="tab" data-tab="bits" aria-selected="false">Bits</button>
+      <button role="tab" data-tab="color" aria-selected="false">Color</button>
+    </div>
+    <div id="content"></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const COLORS = {
+  clear:{n:'Clear',hex:'#dcecf1',op:.3}, cobalt:{n:'Cobalt',hex:'#1f45b8',op:.62},
+  amber:{n:'Amber',hex:'#c8761a',op:.55}, sea:{n:'Sea green',hex:'#3fa38a',op:.5},
+  ruby:{n:'Ruby',hex:'#b0173a',op:.62}, smoke:{n:'Smoke',hex:'#4a4f55',op:.6},
+  opal:{n:'Opal white',hex:'#f1efe8',op:.93}, black:{n:'Black',hex:'#161616',op:.97}
+};
+const DEFAULT = {
+  body:'bubble',
+  profile:[[0,0],[.6,.02],[.92,.3],[.88,.72],[.5,1.08],[.16,1.32],[.04,1.55]],
+  flatten:1, square:0,
+  donut:{R:.62,tube:.42,tall:1.08,flatten:.32,neckH:.55,neckW:.42},
+  bits:{count:0,mode:'ring',shape:'spike',at:.8,from:.3,to:.7,len:.5,size:.12,curl:0},
+  color:'clear', wraps:0, wrapColor:'opal',
+  open:{cut:0,tilt:0,lip:'fire'}
+};
+const PRESETS = {
+  onion:{profile:[[0,0],[.6,.02],[.92,.3],[.88,.72],[.5,1.08],[.16,1.32],[.04,1.55]],
+    bits:{count:2,mode:'ring',shape:'horn',at:.8,len:.6,size:.13,curl:.75}, color:'amber', wraps:7, wrapColor:'opal'},
+  flask:{profile:[[0,0],[.95,0],[.92,.38],[.62,.78],[.3,.95],[.26,1.15],[.26,1.9],[.3,1.96]],
+    bits:{count:1,mode:'outline',shape:'tube',from:.28,to:.28,len:.55,size:.14,curl:.15}, color:'clear'},
+  donut:{body:'donut', bits:{count:10,mode:'outline',shape:'spike',len:.6,size:.2,curl:0}, color:'clear'},
+  tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,lip:'ground'}}
+};
+function clone(o){return JSON.parse(JSON.stringify(o))}
+function fromPreset(name){
+  const p = PRESETS[name], s = clone(DEFAULT);
+  for (const k in p){
+    if (k==='bits'||k==='donut') Object.assign(s[k], clone(p[k])); else s[k]=clone(p[k]);
+  }
+  return s;
+}
+let S;
+try{ const saved = localStorage.getItem('glass-sketchbook-v1'); S = saved ? Object.assign(clone(DEFAULT), JSON.parse(saved)) : fromPreset('onion'); }
+catch(e){ S = fromPreset('onion'); }
+let saveT;
+function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{localStorage.setItem('glass-sketchbook-v1', JSON.stringify(S))}catch(e){} },300); }
+
+/* ---------- 3D scene ---------- */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35,1,0.05,100);
+scene.add(new THREE.HemisphereLight(0xffffff,0x3c4a55,0.85));
+const key = new THREE.DirectionalLight(0xffffff,1.15); key.position.set(3,5,4); scene.add(key);
+const rim = new THREE.DirectionalLight(0xdfefff,0.9); rim.position.set(-4,2,-5); scene.add(rim);
+const warm = new THREE.PointLight(0xffb070,0.6,20); warm.position.set(-3,-1,3); scene.add(warm);
+
+const piece = new THREE.Group(); scene.add(piece);
+const shadowTex = (()=>{const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');
+  const gr=g.createRadialGradient(64,64,0,64,64,64);gr.addColorStop(0,'rgba(0,0,0,.32)');gr.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=gr;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c);})();
+const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1,1), new THREE.MeshBasicMaterial({map:shadowTex,transparent:true,depthWrite:false}));
+shadow.rotation.x = -Math.PI/2; scene.add(shadow);
+
+let yaw=0.5, pitch=0.25, dist=6, fitDist=6;
+function placeCamera(){
+  camera.position.set(dist*Math.cos(pitch)*Math.sin(yaw), dist*Math.sin(pitch), dist*Math.cos(pitch)*Math.cos(yaw));
+  camera.lookAt(0,0,0);
+}
+function resize(){
+  const w=stage.clientWidth,h=stage.clientHeight; renderer.setSize(w,h,false);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+/* geometry helpers */
+function T(x,z){
+  const r=Math.hypot(x,z); if(r<1e-7) return [x,z*S.flatten];
+  const th=Math.atan2(z,x), c=Math.cos(th), s=Math.sin(th); let f=1;
+  if(S.square>0){ const n=2+S.square*14; f=Math.pow(Math.pow(Math.abs(c),n)+Math.pow(Math.abs(s),n),-1/n); }
+  return [r*f*c, r*f*s*S.flatten];
+}
+function sweep(base,dir,len,r0,r1,curl,open){
+  const up=new THREE.Vector3(0,1,0);
+  let side=new THREE.Vector3().crossVectors(dir,up); if(side.lengthSq()<1e-4) side.set(0,0,1); side.normalize();
+  const bend=new THREE.Vector3().crossVectors(side,dir).normalize();
+  const segs=28, rad=16, pos=[], idx=[];
+  const back=r0*0.7, L=len+back;
+  const start=base.clone().addScaledVector(dir,-back);
+  let tip;
+  for(let i=0;i<=segs;i++){
+    const s=i/segs;
+    const p=start.clone().addScaledVector(dir,L*s).addScaledVector(bend,curl*L*s*s);
+    const t=dir.clone().multiplyScalar(L).addScaledVector(bend,2*curl*L*s).normalize();
+    const n=new THREE.Vector3().crossVectors(side,t).normalize();
+    const r=r0+(r1-r0)*s;
+    for(let j=0;j<rad;j++){const a=j/rad*Math.PI*2;
+      const v=p.clone().addScaledVector(side,Math.cos(a)*r).addScaledVector(n,Math.sin(a)*r); pos.push(v.x,v.y,v.z);}
+    if(i===segs) tip=p.clone().addScaledVector(t,r);
+  }
+  for(let i=0;i<segs;i++)for(let j=0;j<rad;j++){
+    const a=i*rad+j,b=i*rad+(j+1)%rad,c=a+rad,d=b+rad; idx.push(a,c,b,b,c,d);
+  }
+  if(!open){ const ti=pos.length/3; pos.push(tip.x,tip.y,tip.z);
+    for(let j=0;j<rad;j++){const a=segs*rad+j,b=segs*rad+(j+1)%rad; idx.push(a,ti,b);} }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+function bitRadii(){ const b=S.bits;
+  if(b.shape==='spike') return [b.size,0.006,false];
+  if(b.shape==='horn') return [b.size,b.size*0.12,false];
+  return [b.size,b.size*0.85,true];
+}
+function wrapsTex(){
+  const c=document.createElement('canvas'); c.width=8; c.height=512; const g=c.getContext('2d');
+  g.fillStyle=COLORS[S.color].hex; g.fillRect(0,0,8,512); g.fillStyle=COLORS[S.wrapColor].hex;
+  const n=S.wraps; for(let i=0;i<n;i++){ const v=0.1+0.8*(i+0.5)/n; g.fillRect(0,512*(1-v)-4,8,8); }
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t;
+}
+function makeMat(){
+  const c=COLORS[S.color], useMap=S.wraps>0;
+  const op = useMap ? Math.max(c.op,.55) : c.op;
+  return new THREE.MeshPhysicalMaterial({
+    color: useMap?0xffffff:new THREE.Color(c.hex), map: useMap?wrapsTex():null,
+    transparent:true, opacity:op, roughness:0.07, metalness:0, clearcoat:1, clearcoatRoughness:0.04,
+    side:THREE.DoubleSide, depthWrite: op>0.85
+  });
+}
+function profileCurve(){
+  return new THREE.CatmullRomCurve3(S.profile.map(p=>new THREE.Vector3(Math.max(0,p[0]),p[1],0)),false,'centripetal');
+}
+function tAtHeight(curve,h){
+  const ymax=Math.max(...S.profile.map(p=>p[1])), N=300;
+  for(let i=1;i<=N;i++){ if(curve.getPointAt(i/N).y>=h*ymax) return i/N; } return 1;
+}
+
+/* openings and cold-worked lips */
+const WALL=0.045; // drawn wall thickness for lips
+function cutPlane(ymax){
+  const O=S.open; if(!(O.cut>0.005)) return null;
+  const a=O.tilt*Math.PI/180;
+  return {n:new THREE.Vector3(Math.sin(a),Math.cos(a),0), y:(1-O.cut)*ymax};
+}
+// signed distance to the cut plane: <=0 is glass you keep, >0 is cut away
+const sideOf=(pl,p)=> pl ? pl.n.x*p.x + pl.n.y*(p.y-pl.y) + pl.n.z*p.z : -1;
+
+// samples: [{u, d}] up one meridian from bottom (u=0) to top; d = sideOf() at that point.
+// Return the profile parameter u where this meridian should end, or null to leave it uncut.
+function cutParam(samples){
+  // End at the first exit: like scoring and cracking off, everything above the line goes,
+  // even if the form dips back below the plane further up.
+  if(samples[0].d>0) return 0;
+  for(let i=1;i<samples.length;i++){
+    const a=samples[i-1], b=samples[i];
+    if(b.d>0) return a.u+(b.u-a.u)*a.d/(a.d-b.d);
+  }
+  return null;
+}
+
+// Lathe built one meridian at a time so each can end exactly on the cut plane.
+function buildBody(curve,pl){
+  const prof=curve.getPoints(140), NP=prof.length, last=NP-1, M=112;
+  const at=(phi,u)=>{ const i=Math.min(last-1,Math.floor(u)), f=u-i, a=prof[i], b=prof[i+1];
+    const r=Math.max(0.0001,a.x+(b.x-a.x)*f), y=a.y+(b.y-a.y)*f;
+    const [x,z]=T(r*Math.cos(phi),r*Math.sin(phi)); return new THREE.Vector3(x,y,z); };
+  const pos=[], uv=[], idx=[], rim=[];
+  for(let k=0;k<M;k++){
+    const phi=2*Math.PI*k/M; let uEnd=last;
+    if(pl){ const c=cutParam(prof.map((_,i)=>({u:i,d:sideOf(pl,at(phi,i))}))); if(c!=null) uEnd=Math.max(0,Math.min(last,c)); }
+    for(let i=0;i<NP;i++){ const u=uEnd*i/last, p=at(phi,u); pos.push(p.x,p.y,p.z); uv.push(k/M,u/last); }
+    rim.push(at(phi,uEnd));
+  }
+  for(let k=0;k<M;k++){ const k2=(k+1)%M; for(let i=0;i<last;i++){ const a=k*NP+i,b=k2*NP+i; idx.push(a,b,a+1,b,b+1,a+1); } }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx); g.computeVertexNormals();
+  // only a clean, fully open mouth gets a lip
+  const open=rim.every(p=>Math.hypot(p.x,p.z)>0.06);
+  return {geo:g, rim:open?rim:null};
+}
+function groundMat(){ const c=COLORS[S.color];
+  return new THREE.MeshPhysicalMaterial({color:new THREE.Color(c.hex).lerp(new THREE.Color(0xffffff),.55),
+    roughness:.65, metalness:0, transparent:true, opacity:Math.min(1,c.op+.35), side:THREE.DoubleSide}); }
+// loop: closed ring of rim points; n: direction the mouth faces
+function addLip(loop,n,glass){
+  const L=S.open.lip;
+  if(L==='fire'){ // flame-rounded edge: a soft bead the same glass as the body
+    piece.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(loop,true,'centripetal'),loop.length*2,WALL*.6,10,true),glass));
+  } else if(L==='ground'){ // flat-ground and frosted: a U-shaped band whose top lies in the cut
+    const pos=[], idx=[], N=loop.length, hw=WALL/2, dep=WALL*.7;
+    for(const P of loop){
+      const r=new THREE.Vector3(P.x,0,P.z).normalize(); r.addScaledVector(n,-r.dot(n)).normalize();
+      [[-hw,-dep],[-hw,0],[hw,0],[hw,-dep]].forEach(([o,d])=>{ const v=P.clone().addScaledVector(r,o).addScaledVector(n,d); pos.push(v.x,v.y,v.z); });
+    }
+    for(let k=0;k<N;k++){ const k2=(k+1)%N; for(let j=0;j<3;j++){ const a=k*4+j,b=k2*4+j; idx.push(a,b,a+1,b,b+1,a+1); } }
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals();
+    piece.add(new THREE.Mesh(g,groundMat()));
+  }
+}
+
+function rebuild(){
+  piece.children.slice().forEach(m=>{piece.remove(m); m.geometry.dispose(); if(m.material.map) m.material.map.dispose(); m.material.dispose();});
+  const mat=makeMat(), add=g=>piece.add(new THREE.Mesh(g,mat));
+  const B=S.bits, up=new THREE.Vector3(0,1,0), [r0,r1,open]=bitRadii();
+  if(S.body==='bubble'){
+    const curve=profileCurve(), pl=cutPlane(Math.max(...S.profile.map(p=>p[1])));
+    const body=buildBody(curve,pl); add(body.geo);
+    if(body.rim) addLip(body.rim, pl?pl.n:new THREE.Vector3(0,1,0), mat);
+    if(B.count>0){
+      const list=[];
+      if(B.mode==='ring'){ const t=tAtHeight(curve,B.at); for(let k=0;k<B.count;k++) list.push([t,2*Math.PI*k/B.count]); }
+      else { for(let k=0;k<B.count;k++){ const h=B.count===1?B.from:B.from+(B.to-B.from)*k/(B.count-1);
+        const t=tAtHeight(curve,h); list.push([t,0],[t,Math.PI]); } }
+      for(const [t,phi] of list){
+        const pt=curve.getPointAt(t), tan=curve.getTangentAt(t);
+        const n2=new THREE.Vector2(tan.y,-tan.x).normalize();
+        const [px,pz]=T(pt.x*Math.cos(phi),pt.x*Math.sin(phi));
+        let h=new THREE.Vector3(px,0,pz); if(h.lengthSq()<1e-6) h.set(Math.cos(phi),0,Math.sin(phi)); h.normalize();
+        const dir=h.multiplyScalar(n2.x).addScaledVector(up,n2.y).normalize();
+        if(sideOf(pl,new THREE.Vector3(px,pt.y,pz))>0) continue; // bit was on glass that got cut off
+        add(sweep(new THREE.Vector3(px,pt.y,pz),dir,B.len,r0,r1,B.curl,open));
+      }
+    }
+  } else {
+    const D=S.donut, g=new THREE.TorusGeometry(D.R,D.tube,40,128), p=g.attributes.position;
+    for(let i=0;i<p.count;i++){ p.setY(i,p.getY(i)*D.tall); p.setZ(i,p.getZ(i)*D.flatten); }
+    g.computeVertexNormals(); add(g);
+    const Ro=D.R+D.tube;
+    if(D.neckH>0){
+      const n=new THREE.CylinderGeometry(D.neckW*0.72,D.neckW,D.neckH+D.tube*0.5,48,1,true), np=n.attributes.position;
+      const zs=Math.min(1,D.flatten*1.6), y0=Ro*D.tall-D.tube*0.5+(D.neckH+D.tube*0.5)/2;
+      for(let i=0;i<np.count;i++){ np.setZ(i,np.getZ(i)*zs); np.setY(i,np.getY(i)+y0); }
+      n.computeVertexNormals(); add(n);
+      const yTop=y0+(D.neckH+D.tube*0.5)/2, rT=D.neckW*0.72, loop=[];
+      for(let k=0;k<64;k++){ const a=2*Math.PI*k/64; loop.push(new THREE.Vector3(rT*Math.cos(a),yTop,rT*Math.sin(a)*zs)); }
+      addLip(loop,new THREE.Vector3(0,1,0),mat);
+    }
+    if(B.count>0){
+      const gap=D.neckH>0?Math.min(0.9,D.neckW/Ro+0.25):0;
+      for(let k=0;k<B.count;k++){
+        let a;
+        if(gap>0) a = B.count===1 ? -Math.PI/2 : Math.PI/2+gap+(2*Math.PI-2*gap)*k/(B.count-1);
+        else a = Math.PI/2 + 2*Math.PI*k/B.count;
+        const base=new THREE.Vector3(Math.cos(a)*Ro*0.97, Math.sin(a)*Ro*D.tall*0.97, 0);
+        const dir=new THREE.Vector3(Math.cos(a)*D.tall, Math.sin(a), 0).normalize();
+        add(sweep(base,dir,B.len,r0,r1,B.curl,open));
+      }
+    }
+  }
+  // center & fit
+  const box=new THREE.Box3().setFromObject(piece), c=box.getCenter(new THREE.Vector3()), size=box.getSize(new THREE.Vector3());
+  piece.position.sub(c);
+  const box2=new THREE.Box3().setFromObject(piece);
+  shadow.position.y=box2.min.y-0.005;
+  const sw=Math.max(size.x,size.z)*1.5; shadow.scale.set(sw,sw,1);
+  fitDist=Math.max(size.x,size.y,size.z)*2.5+0.5;
+}
+let pending=false;
+function schedule(){ if(pending) return; pending=true; requestAnimationFrame(()=>{pending=false; const keep=piece.position.clone(); piece.position.set(0,0,0); rebuild(); save();}); }
+
+/* orbit controls */
+const ptrs=new Map(); let pinch0=0, dist0=0;
+stage.addEventListener('pointerdown',e=>{ if(e.target.closest('.stage-tools')) return; stage.setPointerCapture(e.pointerId); ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()]; pinch0=Math.hypot(a.x-b.x,a.y-b.y); dist0=dist;} });
+stage.addEventListener('pointermove',e=>{ if(!ptrs.has(e.pointerId)) return; const prev=ptrs.get(e.pointerId); const cur={x:e.clientX,y:e.clientY}; ptrs.set(e.pointerId,cur);
+  if(ptrs.size===1){ yaw-=(cur.x-prev.x)*0.008; pitch=Math.max(-0.35,Math.min(1.35,pitch+(cur.y-prev.y)*0.006)); }
+  else if(ptrs.size===2){const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y); if(pinch0) dist=Math.max(1.5,Math.min(30,dist0*pinch0/d));} });
+const endPtr=e=>{ptrs.delete(e.pointerId); if(ptrs.size<2) pinch0=0;};
+stage.addEventListener('pointerup',endPtr); stage.addEventListener('pointercancel',endPtr);
+stage.addEventListener('wheel',e=>{e.preventDefault(); dist=Math.max(1.5,Math.min(30,dist*(1+e.deltaY*0.001)));},{passive:false});
+let spinning=false;
+document.getElementById('spinBtn').onclick=e=>{spinning=!spinning; e.currentTarget.setAttribute('aria-pressed',spinning);};
+document.getElementById('viewBtn').onclick=()=>{yaw=0.5;pitch=0.25;dist=fitDist;};
+function loop(){ if(spinning) yaw+=0.006; placeCamera(); renderer.render(scene,camera); requestAnimationFrame(loop); }
+
+/* ---------- panel UI ---------- */
+let tab='shape', sketch=null, sk={op:.5,scale:1,x:0,y:0,behind:false};
+const content=document.getElementById('content');
+function h(tag,attrs={},...kids){ const e=document.createElement(tag);
+  for(const k in attrs){ if(k.startsWith('on')) e[k]=attrs[k]; else if(k==='text') e.textContent=attrs[k]; else e.setAttribute(k,attrs[k]); }
+  kids.flat().forEach(c=>c!=null&&e.append(c)); return e; }
+let uid=0;
+function slider(label,get,set,min,max,step,fmt=v=>(+v).toFixed(2),after){
+  const id='s'+(uid++); const out=h('output',{text:fmt(get())});
+  const inp=h('input',{type:'range',id,min,max,step,value:get()});
+  inp.oninput=()=>{ set(+inp.value); out.textContent=fmt(+inp.value); (after||schedule)(); };
+  return h('div',{class:'row'}, h('label',{class:'lbl',for:id}, h('span',{text:label}), out), inp);
+}
+function seg(label,opts,get,set){
+  return h('div',{class:'row'}, h('span',{class:'seg-label',text:label}),
+    h('div',{class:'seg',role:'group','aria-label':label}, opts.map(([v,t])=>h('button',{'aria-pressed':String(get()===v),text:t,onclick:()=>{set(v); schedule(); render();}}))));
+}
+function swatches(get,set){
+  return h('div',{class:'swatches'}, Object.entries(COLORS).map(([k,c])=>{
+    const i=h('i'); i.style.background=c.hex; i.style.opacity=Math.max(c.op,.45);
+    return h('button',{class:'sw','aria-pressed':String(get()===k),onclick:()=>{set(k); schedule(); render();}}, i, c.n); }));
+}
+
+function render(){
+  content.innerHTML='';
+  if(tab==='shape') renderShape(); else if(tab==='bits') renderBits(); else renderColor();
+}
+function renderShape(){
+  content.append(seg('Body',[['bubble','Blown bubble'],['donut','Blown donut']],()=>S.body,v=>S.body=v));
+  if(S.body==='bubble'){
+    const cv=h('canvas',{'aria-label':'Profile editor: half silhouette of the piece'});
+    content.append(h('div',{class:'pe'},cv),
+      h('p',{class:'hint',text:'Drag the points to shape one side of the silhouette; it spins into the full piece. Tap the outline to add a point, double-tap a point to remove it.'}));
+    setupPE(cv);
+    content.append(
+      slider('Paddle flat',()=>S.flatten,v=>S.flatten=v,.15,1,.01,v=>v>=.99?'round':Math.round(v*100)+'% depth'),
+      slider('Square up (marver and flip)',()=>S.square,v=>S.square=v,0,1,.01,v=>v<.01?'off':Math.round(v*100)+'%'));
+  } else {
+    const D=S.donut;
+    content.append(
+      slider('Ring size',()=>D.R,v=>D.R=v,.3,1.1,.01),
+      slider('Body thickness',()=>D.tube,v=>D.tube=v,.15,.65,.01),
+      slider('Stretch taller',()=>D.tall,v=>D.tall=v,.7,1.6,.01),
+      slider('Paddle flat',()=>D.flatten,v=>D.flatten=v,.15,1,.01,v=>v>=.99?'round':Math.round(v*100)+'% depth'),
+      slider('Neck height',()=>D.neckH,v=>D.neckH=v,0,1.3,.01,v=>v<.01?'none':v.toFixed(2)),
+      slider('Neck width',()=>D.neckW,v=>D.neckW=v,.12,.75,.01));
+  }
+  renderOpening();
+  renderSketch();
+}
+function renderOpening(){
+  const O=S.open, sec=h('div',{class:'section'}, h('h2',{text:'Opening and lip'}));
+  if(S.body==='bubble') sec.append(
+    slider('Cut off the top',()=>O.cut,v=>O.cut=v,0,.6,.01,v=>v<.005?'none':Math.round(v*100)+'%'),
+    slider('Tilt the cut',()=>O.tilt,v=>O.tilt=v,-35,35,1,v=>Math.round(v)+'°'));
+  if(S.body==='bubble' || S.donut.neckH>0){
+    sec.append(seg('Lip finish',[['raw','As cut'],['fire','Fire-polished'],['ground','Ground flat']],()=>O.lip,v=>O.lip=v),
+      h('p',{class:'hint',text:'Fire-polished rounds the edge in the glory hole. Ground flat is cold-worked on the wheel, so it shows frosted. Lips appear wherever the mouth is open.'}));
+  } else sec.append(h('p',{class:'hint',text:'Add a neck to get an opening.'}));
+  content.append(sec);
+}
+function renderSketch(){
+  const sec=h('div',{class:'section'}, h('h2',{text:'Your sketch'}));
+  const file=h('input',{type:'file',accept:'image/*'});
+  file.onchange=()=>{ const f=file.files[0]; if(!f) return; const r=new FileReader();
+    r.onload=()=>{ const img=new Image(); img.onload=()=>{ sketch=img; document.getElementById('behind').src=img.src; updateBehind(); render(); }; img.src=r.result; }; r.readAsDataURL(f); };
+  if(!sketch){
+    sec.append(h('p',{class:'hint',text: S.body==='bubble'?'Add a photo of a sketch to trace over in the profile editor.':'Add a photo of a sketch to compare against the 3D view.'}),
+      h('label',{class:'file'}, 'Add sketch photo', file));
+  } else {
+    const redraw=()=>{ peDraw&&peDraw(); updateBehind(); };
+    sec.append(
+      slider('Sketch visibility',()=>sk.op,v=>sk.op=v,.1,1,.01,v=>Math.round(v*100)+'%',redraw),
+      slider('Sketch size',()=>sk.scale,v=>sk.scale=v,.3,2.5,.01,v=>v.toFixed(2)+'×',redraw),
+      slider('Move sketch sideways',()=>sk.x,v=>sk.x=v,-.6,.6,.005,v=>v.toFixed(2),redraw),
+      slider('Move sketch up and down',()=>sk.y,v=>sk.y=v,-.6,.6,.005,v=>v.toFixed(2),redraw));
+    const cb=h('input',{type:'checkbox',id:'cbBehind'}); cb.checked=sk.behind; cb.onchange=()=>{sk.behind=cb.checked; updateBehind();};
+    sec.append(h('label',{class:'check',for:'cbBehind'},cb,'Also show it behind the 3D view'),
+      h('p',{}, h('label',{class:'file'},'Replace photo',file), h('button',{class:'linkbtn',text:'Remove sketch',onclick:()=>{sketch=null; sk.behind=false; updateBehind(); render();}})));
+  }
+  content.append(sec);
+}
+function updateBehind(){ const b=document.getElementById('behind'); b.style.display=(sketch&&sk.behind)?'block':'none'; b.style.opacity=sk.op; }
+
+function renderBits(){
+  const B=S.bits;
+  content.append(seg('Bit',[['spike','Spike'],['horn','Pulled horn'],['tube','Spout']],()=>B.shape,v=>B.shape=v));
+  if(S.body==='bubble') content.append(seg('Placement',[['ring','Around the piece'],['outline','Along the sides']],()=>B.mode,v=>B.mode=v));
+  const maxC = S.body==='donut'?24 : B.mode==='ring'?12:8;
+  if(B.count>maxC) B.count=maxC;
+  const cLabel = S.body==='donut'?'How many around the rim' : B.mode==='ring'?'How many':'How many on each side';
+  content.append(slider(cLabel,()=>B.count,v=>B.count=v,0,maxC,1,v=>v<1?'none':String(v)));
+  if(S.body==='bubble'){
+    if(B.mode==='ring') content.append(slider('Height on piece',()=>B.at,v=>B.at=v,0,1,.01,v=>Math.round(v*100)+'%'));
+    else content.append(
+      slider('Lowest bit height',()=>B.from,v=>B.from=v,0,1,.01,v=>Math.round(v*100)+'%'),
+      slider('Highest bit height',()=>B.to,v=>B.to=v,0,1,.01,v=>Math.round(v*100)+'%'));
+  }
+  content.append(
+    slider('Length (how far you pull)',()=>B.len,v=>B.len=v,.05,1.6,.01),
+    slider('Bit size at the base',()=>B.size,v=>B.size=v,.03,.4,.005),
+    slider('Curl (down to up)',()=>B.curl,v=>B.curl=v,-.8,1.4,.01));
+}
+function renderColor(){
+  content.append(h('span',{class:'seg-label',text:'Glass color'}), swatches(()=>S.color,v=>S.color=v),
+    slider('Color wraps',()=>S.wraps,v=>S.wraps=v,0,16,1,v=>v<1?'none':String(v), ()=>{schedule(); if((S.wraps>0)!==hadWraps) render();}));
+  var hadWraps=S.wraps>0;
+  if(S.wraps>0) content.append(h('span',{class:'seg-label',text:'Wrap color'}), swatches(()=>S.wrapColor,v=>S.wrapColor=v));
+}
+
+/* profile editor */
+let peDraw=null;
+function setupPE(cv){
+  const ctx=cv.getContext('2d'); let drag=-1, lastTap={i:-1,t:0};
+  const cs=getComputedStyle(document.documentElement);
+  function map(){ const W=cv.clientWidth,H=cv.clientHeight; const s=Math.min((W-24)/2.9,(H-28)/2.75); return {W,H,s,cx:W/2,by:H-14}; }
+  const toS=(m,r,y)=>[m.cx+r*m.s, m.by-y*m.s];
+  function draw(){
+    const dpr=Math.min(window.devicePixelRatio,2), m=map();
+    if(cv.width!==Math.round(m.W*dpr)){cv.width=Math.round(m.W*dpr); cv.height=Math.round(m.H*dpr);}
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,m.W,m.H);
+    if(sketch){ const ih=m.H*sk.scale, iw=ih*sketch.width/sketch.height;
+      ctx.globalAlpha=sk.op; ctx.drawImage(sketch, m.cx-iw/2+sk.x*m.W, m.H/2-ih/2+sk.y*m.H, iw, ih); ctx.globalAlpha=1; }
+    const ink=cs.getPropertyValue('--ink').trim(), muted=cs.getPropertyValue('--muted').trim(), acc=cs.getPropertyValue('--accent').trim();
+    ctx.strokeStyle=muted; ctx.lineWidth=1; ctx.setLineDash([4,5]);
+    ctx.beginPath(); ctx.moveTo(m.cx,6); ctx.lineTo(m.cx,m.H); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(10,m.by); ctx.lineTo(m.W-10,m.by); ctx.stroke();
+    const pts=profileCurve().getPoints(120);
+    ctx.lineWidth=2; ctx.strokeStyle=muted; ctx.globalAlpha=.6; ctx.beginPath();
+    pts.forEach((p,i)=>{const [x,y]=toS(m,-p.x,p.y); i?ctx.lineTo(x,y):ctx.moveTo(x,y);}); ctx.stroke(); ctx.globalAlpha=1;
+    ctx.strokeStyle=acc; ctx.lineWidth=2.5; ctx.beginPath();
+    pts.forEach((p,i)=>{const [x,y]=toS(m,p.x,p.y); i?ctx.lineTo(x,y):ctx.moveTo(x,y);}); ctx.stroke();
+    S.profile.forEach(([r,y],i)=>{const [x,yy]=toS(m,r,y); ctx.beginPath(); ctx.arc(x,yy,i===drag?9:7,0,Math.PI*2);
+      ctx.fillStyle=i===drag?acc:cs.getPropertyValue('--panel').trim(); ctx.fill(); ctx.strokeStyle=acc; ctx.lineWidth=2; ctx.stroke();});
+  }
+  peDraw=draw;
+  const pos=e=>{const b=cv.getBoundingClientRect(); return [e.clientX-b.left,e.clientY-b.top];};
+  cv.onpointerdown=e=>{
+    const [x,y]=pos(e), m=map(); cv.setPointerCapture(e.pointerId);
+    let best=-1,bd=22;
+    S.profile.forEach(([r,yy],i)=>{const [sx,sy]=toS(m,r,yy); const d=Math.hypot(sx-x,sy-y); if(d<bd){bd=d;best=i;}});
+    if(best>=0){
+      const now=performance.now();
+      if(lastTap.i===best && now-lastTap.t<320 && S.profile.length>3){ S.profile.splice(best,1); lastTap={i:-1,t:0}; schedule(); draw(); return; }
+      lastTap={i:best,t:now}; drag=best; draw(); return;
+    }
+    // insert on nearest segment
+    let seg=-1, sd=18;
+    for(let i=0;i<S.profile.length-1;i++){
+      const [ax,ay]=toS(m,...S.profile[i]), [bx,by]=toS(m,...S.profile[i+1]);
+      const dx=bx-ax, dy=by-ay, L=dx*dx+dy*dy||1, t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L));
+      const d=Math.hypot(ax+dx*t-x, ay+dy*t-y); if(d<sd){sd=d;seg=i;}
+    }
+    if(seg>=0){ S.profile.splice(seg+1,0,[Math.max(0,(x-m.cx)/m.s),(m.by-y)/m.s]); drag=seg+1; schedule(); draw(); }
+  };
+  cv.onpointermove=e=>{ if(drag<0) return; const [x,y]=pos(e), m=map();
+    S.profile[drag]=[Math.max(0,Math.min(1.45,(x-m.cx)/m.s)), Math.max(0,Math.min(2.7,(m.by-y)/m.s))]; schedule(); draw(); };
+  cv.onpointerup=cv.onpointercancel=()=>{ drag=-1; draw(); };
+  new ResizeObserver(draw).observe(cv);
+}
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  tab=b.dataset.tab; document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',String(x===b))); peDraw=null; render(); });
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ S=fromPreset(b.dataset.preset); piece.position.set(0,0,0); rebuild(); save(); dist=fitDist; render(); });
+
+resize(); rebuild(); dist=fitDist; render(); loop();
+</script>
+</body>
+</html>
