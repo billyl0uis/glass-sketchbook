@@ -107,6 +107,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
     <button class="chip" data-preset="donut">Spiked donut</button>
     <button class="chip" data-preset="tank">Squared tank</button>
     <button class="chip" data-preset="jaw">Sphere on a jaw</button>
+    <button class="chip" data-preset="curl">Solid curl</button>
   </div>
 </header>
 <main>
@@ -159,6 +160,7 @@ const DEFAULT = {
   color:'clear', wraps:0, wrapColor:'opal',
   open:{cut:0,tilt:0,turn:0,lip:'fire'},
   jaw:{on:false,at:.18,around:180,len:.45,size:.17,square:0,hollow:false},
+  curl:{sweep:290,stretch:1.8,size:.72,base:.4,tip:.25,tighten:.08,width:1.3,flat:.4},
   draw:{style:'both',height:20,unit:'cm'}
 };
 const PRESETS = {
@@ -169,13 +171,14 @@ const PRESETS = {
   donut:{body:'donut', bits:{count:10,mode:'outline',shape:'spike',len:.6,size:.2,curl:0}, color:'clear'},
   tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,turn:0,lip:'ground'}},
   jaw:{profile:[[0,0],[.45,.12],[.78,.45],[.9,.9],[.78,1.35],[.45,1.68],[0,1.8]], color:'cobalt',
-    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.55,size:.26,square:.85,hollow:true,nose:.7}}
+    open:{cut:.08,tilt:0,turn:0,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.55,size:.26,square:.85,hollow:true,nose:.7}},
+  curl:{body:'curl', color:'amber', curl:{sweep:290,stretch:1.8,size:.72,base:.4,tip:.25,tighten:.08,width:1.3,flat:.4}}
 };
 function clone(o){return JSON.parse(JSON.stringify(o))}
 function fromPreset(name){
   const p = PRESETS[name], s = clone(DEFAULT);
   for (const k in p){
-    if (k==='bits'||k==='donut') Object.assign(s[k], clone(p[k])); else s[k]=clone(p[k]);
+    if (k==='bits'||k==='donut'||k==='curl') Object.assign(s[k], clone(p[k])); else s[k]=clone(p[k]);
   }
   return s;
 }
@@ -248,7 +251,7 @@ const squareF=(c,s,sq)=> sq>0 ? Math.pow(Math.pow(Math.abs(c),2+sq*10)+Math.pow(
 // tipK: how pointed the closed end is (1 round, near 0 flat); sq: 0 round to 1 square
 function sweep(base,dir,len,r0,r1,curl,open,tipK=1,sq=0){
   const [side,bend]=tubeAxes(dir);
-  const segs=28, rad=sq>0?40:16, pos=[], idx=[];
+  const segs=sq>0?56:28, rad=sq>0?72:16, pos=[], idx=[]; // squared tubes (the jaw) get finer mesh so openings cut cleanly
   const back=r0*0.7, L=len+back;
   const start=base.clone().addScaledVector(dir,-back);
   let tip;
@@ -382,15 +385,57 @@ function channelDist(jf,r,sq){
     return (1-m/f)*r; };
 }
 
-// The nostril: an oval opening in the jaw's upper face, halfway along it. Through it you
-// look down the hollow jaw and its channel into the inside of the piece.
+// Opening shapes, each a "size" measure m(a,b) in the opening's own coordinates
+// (a along the jaw toward its end, b across it): m<1 is inside the opening, m=1 is its edge.
+const NOSE_SHAPES={
+  oval:(a,b)=>Math.hypot(a,b),
+  square:(a,b)=>Math.pow(Math.pow(Math.abs(a),8)+Math.pow(Math.abs(b),8),1/8),
+  diamond:(a,b)=>Math.abs(a)+Math.abs(b),
+  // round end toward the body, point toward the jaw's end
+  // a circle at the round end joined by two straight sides to the point
+  tear:(a,b)=>{ const r=.55, cx=-1+r, D=1-cx, tanA=r/Math.sqrt(D*D-r*r), at=cx+r*r/D;
+    const circle=Math.hypot(a-cx,b)/r, cone=(a>=at && a<1) ? Math.abs(b)/((1-a)*tanA) : 9;
+    return Math.min(circle,cone); },
+  // two nostrils side by side
+  pair:(a,b)=>Math.min(Math.hypot(a,(b-.55)/.45),Math.hypot(a,(b+.55)/.45)),
+};
+// The nostril: an opening in the jaw's upper face. Through it you look down the hollow jaw
+// and its channel into the inside of the piece.
 function noseCut(jf,J){
   const up=new THREE.Vector3(0,1,0), top=up.clone().addScaledVector(jf.dir,-up.dot(jf.dir)).normalize();
   const lat=new THREE.Vector3().crossVectors(jf.dir,top).normalize(), v=new THREE.Vector3();
-  // the jaw's first stretch is buried in the body's wall, so "midway" is midway along the part you can see
-  const s=J.nose??.7, mid=J.len*.42, w=Math.max(.02,J.len*.4*s), hw=Math.max(.02,J.size*.85*s);
+  const shape=NOSE_SHAPES[J.noseShape]||NOSE_SHAPES.oval;
+  const R=Math.max(.02,J.size*.85*(J.nose??.7)), L=R*(J.noseLong??1);   // half-width, half-length
+  // the jaw's first stretch is buried in the body's wall, so the default spot is midway along the part you can see
+  const mid=J.len*(J.noseAt??.42), rot=(J.noseTurn||0)*Math.PI/180, cr=Math.cos(rot), sr=Math.sin(rot);
   return {top, dist:p=>{ v.copy(p).sub(jf.base); if(v.dot(top)<=0) return -1; // upper face only
-    const a=(v.dot(jf.dir)-mid)/w, b=v.dot(lat)/hw; return (1-Math.hypot(a,b))*Math.min(w,hw); }};
+    const u=v.dot(jf.dir)-mid, w=v.dot(lat), ur=u*cr+w*sr, wr=-u*sr+w*cr;
+    return (1-shape(ur/L,wr/R))*Math.min(L,R); }};
+}
+
+// Solid curl: a thick solid gather swept along a curve that wraps most of the way round
+// (centered on the right, so the open side faces left), fattest at the start, thinning
+// toward the tip, with rounded ends. The underside is marvered flat where it sits.
+function buildCurl(){
+  const C=S.curl, segs=160, rad=48, capN=12, pos=[], uv=[], idx=[], Z=new THREE.Vector3(0,0,1);
+  const sw=C.sweep*Math.PI/180, th0=-sw/2;
+  const center=t=>{ const th=th0+sw*t, rho=C.size*(1-C.tighten*t); return new THREE.Vector3(rho*Math.cos(th)*C.stretch, rho*Math.sin(th), 0); };
+  const tangent=t=>center(Math.min(1,t+1e-3)).sub(center(Math.max(0,t-1e-3))).normalize();
+  const rings=[], P0=center(0), T0=tangent(0), P1=center(1), T1=tangent(1);
+  // rounded start cap, the body, rounded end cap (ring radius goes 0 → full → 0)
+  for(let k=0;k<capN;k++){ const ph=k/capN*Math.PI/2; rings.push([P0.clone().addScaledVector(T0,-C.base*Math.cos(ph)),T0,C.base*Math.sin(ph),0]); }
+  for(let i=0;i<=segs;i++){ const t=i/segs; rings.push([center(t),tangent(t),C.base+(C.tip-C.base)*t,t]); }
+  for(let k=capN-1;k>=0;k--){ const ph=k/capN*Math.PI/2; rings.push([P1.clone().addScaledVector(T1,C.tip*Math.cos(ph)),T1,C.tip*Math.sin(ph),1]); }
+  for(const [c,T,r,v] of rings){ const N=new THREE.Vector3(-T.y,T.x,0);
+    for(let j=0;j<rad;j++){ const a=j/rad*Math.PI*2, p=c.clone().addScaledVector(N,Math.cos(a)*r).addScaledVector(Z,Math.sin(a)*r*C.width);
+      pos.push(p.x,p.y,p.z); uv.push(j/rad,v); } }
+  for(let i=0;i<rings.length-1;i++) for(let j=0;j<rad;j++){ const a=i*rad+j,b=i*rad+(j+1)%rad,c=a+rad,d=b+rad; idx.push(a,c,b,b,c,d); }
+  // marver: press everything below the floor line onto it, for a flat base
+  let minY=Infinity; for(let i=1;i<pos.length;i+=3) minY=Math.min(minY,pos[i]);
+  const floor=minY+C.flat*C.base*.8; for(let i=1;i<pos.length;i+=3) if(pos[i]<floor) pos[i]=floor;
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
 }
 
 // Spun body (lathe with paddle/square applied), then cut if there is a cut.
@@ -491,6 +536,11 @@ function rebuild(){
         piece.children.forEach(m=>m.geometry.applyMatrix4(m4));
       }
     }
+  } else if(S.body==='curl'){
+    // solid glass reads dense, and drawing it opaque-ish avoids stripes from its back faces
+    // (a closed solid only needs its outside faces; two-sided drawing makes back and front fight)
+    mat.opacity=Math.max(mat.opacity,.86); mat.depthWrite=true; mat.side=THREE.FrontSide;
+    add(buildCurl());
   } else {
     const D=S.donut, g=new THREE.TorusGeometry(D.R,D.tube,40,128), p=g.attributes.position;
     for(let i=0;i<p.count;i++){ p.setY(i,p.getY(i)*D.tall); p.setZ(i,p.getZ(i)*D.flatten); }
@@ -571,7 +621,21 @@ function render(){
   if(tab==='shape') renderShape(); else if(tab==='bits') renderBits(); else renderColor();
 }
 function renderShape(){
-  content.append(seg('Body',[['bubble','Blown bubble'],['donut','Blown donut']],()=>S.body,v=>S.body=v));
+  content.append(seg('Body',[['bubble','Blown bubble'],['donut','Blown donut'],['curl','Solid curl']],()=>S.body,v=>S.body=v));
+  if(S.body==='curl'){
+    const C=S.curl;
+    content.append(
+      slider('How far it curls',()=>C.sweep,v=>C.sweep=v,90,340,1,v=>Math.round(v)+'°'),
+      slider('Stretch long',()=>C.stretch,v=>C.stretch=v,1,2.4,.01,v=>v.toFixed(2)+'×'),
+      slider('Size of the curl',()=>C.size,v=>C.size=v,.4,1.3,.01),
+      slider('Thickness at the base',()=>C.base,v=>C.base=v,.1,.6,.005),
+      slider('Thickness at the tip',()=>C.tip,v=>C.tip=v,.05,.6,.005),
+      slider('Spiral in',()=>C.tighten,v=>C.tighten=v,0,.6,.01,v=>v<.01?'none':Math.round(v*100)+'%'),
+      slider('Width, front to back',()=>C.width,v=>C.width=v,.4,2,.01,v=>v.toFixed(2)+'×'),
+      slider('Flat bottom (marvered)',()=>C.flat,v=>C.flat=v,0,1,.01,v=>v<.01?'round':Math.round(v*100)+'%'),
+      h('p',{class:'hint',text:'A solid sculpted form: a thick gather pulled round on itself, thick where it sits and thinning toward the tip. Lower "How far it curls" for a crescent; raise "Spiral in" to wind the tip tighter.'}));
+    renderSketch(); return;
+  }
   if(S.body==='bubble'){
     const cv=h('canvas',{'aria-label':'Profile editor: half silhouette of the piece'});
     content.append(h('div',{class:'pe'},cv),
@@ -630,6 +694,7 @@ function updateBehind(){ const b=document.getElementById('behind'); b.style.disp
 
 function renderBits(){
   const B=S.bits;
+  if(S.body==='curl'){ content.append(h('p',{class:'hint',text:'Bits and the jaw are for blown bubbles and donuts. The solid curl is shaped in the Shape tab.'})); return; }
   content.append(seg('Bit',[['spike','Spike'],['horn','Pulled horn'],['tube','Spout']],()=>B.shape,v=>B.shape=v));
   if(S.body==='bubble') content.append(seg('Placement',[['ring','Around the piece'],['outline','Along the sides']],()=>B.mode,v=>B.mode=v));
   const maxC = S.body==='donut'?24 : B.mode==='ring'?12:8;
@@ -651,13 +716,23 @@ function renderBits(){
     sec.append(seg('Jaw',[[false,'Off'],[true,'On']],()=>J.on,v=>J.on=v));
     if(J.on) sec.append(...[
       seg('Inside',[[false,'Solid'],[true,'Hollow, with an opening']],()=>!!J.hollow,v=>J.hollow=v),
-      J.hollow ? slider('Opening size',()=>J.nose??.7,v=>J.nose=v,.15,1,.01,v=>Math.round(v*100)+'%') : null,
       slider('Square it up',()=>J.square||0,v=>J.square=v,0,1,.01,v=>v<.01?'round':Math.round(v*100)+'%'),
       slider('Height on piece',()=>J.at,v=>J.at=v,0,.8,.01,v=>Math.round(v*100)+'%'),
       slider('Turn around the piece',()=>J.around,v=>J.around=v,0,359,1,v=>Math.round(v)+'°'),
       slider('Length',()=>J.len,v=>J.len=v,.1,1.1,.01),
-      slider('Thickness',()=>J.size,v=>J.size=v,.05,.4,.005)].filter(Boolean));
+      slider('Thickness',()=>J.size,v=>J.size=v,.05,.4,.005)]);
     sec.append(h('p',{class:'hint',text:'A pulled foot of glass the piece leans on. It tips over to rest on the jaw and its own body, the way it will sit on the table. Set it to the same turn as a side hole to put the hole above it.'}));
+    if(J.on && J.hollow){
+      const op=h('div',{class:'section'}, h('h2',{text:'Jaw opening'}));
+      op.append(
+        seg('Shape',[['oval','Oval'],['square','Square'],['diamond','Diamond'],['tear','Teardrop'],['pair','Pair']],()=>J.noseShape||'oval',v=>J.noseShape=v),
+        slider('Size',()=>J.nose??.7,v=>J.nose=v,.15,1,.01,v=>Math.round(v*100)+'%'),
+        slider('Stretch along the jaw',()=>J.noseLong??1,v=>J.noseLong=v,.4,3,.01,v=>v.toFixed(2)+'×'),
+        slider('Turn the opening',()=>J.noseTurn||0,v=>J.noseTurn=v,0,180,1,v=>Math.round(v)+'°'),
+        slider('Position along the jaw',()=>J.noseAt??.42,v=>J.noseAt=v,.15,.85,.01,v=>Math.round(v*100)+'%'),
+        h('p',{class:'hint',text:'Teardrop points toward the end of the jaw; turn it 180° to point it back at the body. Pair makes two nostrils side by side.'}));
+      sec.append(op);
+    }
     content.append(sec);
   }
 }
@@ -802,7 +877,7 @@ async function makeSheet(){
   g.fillStyle=INK; g.textBaseline='alphabetic';
   g.font='750 40px "Bricolage Grotesque",system-ui,sans-serif'; g.fillText('Glass Sketchbook',M,M+12);
   g.font='400 22px "Bricolage Grotesque",system-ui,sans-serif'; g.fillStyle=FAINT;
-  const desc=[S.body==='bubble'?'Blown bubble':'Blown donut', COLORS[S.color].n+' glass', per?'height '+fmt(size.y):'unscaled'];
+  const desc=[{bubble:'Blown bubble',donut:'Blown donut',curl:'Solid curl'}[S.body], COLORS[S.color].n+' glass', per?'height '+fmt(size.y):'unscaled'];
   g.fillText('Orthographic views · '+desc.join(' · '),M,M+48);
   g.textAlign='right'; g.fillText(new Date().toLocaleDateString(),W-M,M+12); g.textAlign='left';
 
@@ -823,6 +898,7 @@ async function makeSheet(){
       const dx=Bp[0]-A[0], dy=Bp[1]-A[1], len=Math.hypot(dx,dy);
       if(len<3){ centerLine(g,A[0],T-24,A[0],B+24); centerLine(g,L-24,A[1],R+24,A[1]); }
       else { const ux=dx/len, uy=dy/len; centerLine(g,A[0]-ux*24,A[1]-uy*24,Bp[0]+ux*30,Bp[1]+uy*30); }
+    } else if(S.body==='curl'){ /* no spin axis to draw */
     } else if(v.name==='Top'){ centerLine(g,cx,T-24,cx,B+24); centerLine(g,L-24,cy,R+24,cy); }
     else centerLine(g,cx,T-30,cx,B+24);
     if(per){
