@@ -22,7 +22,7 @@ It's a single file with no build step. Open `index.html` in a browser.
 - The jaw is a stubby swept bit angled toward the table, round or squared (a superellipse cross-section); the piece is then tipped (found by bisection) until the jaw and the body both touch the ground
 - A hollow jaw keeps its flat end on the table and gets a lipped opening on its upper face (oval, square, diamond, teardrop or a pair of nostrils, which you can size, stretch, turn and slide along the jaw); the body is clipped a second time by the jaw's own footprint, so the opening leads down the jaw into the inside of the piece, like an abstract nasal cavity
 - The donut body is a torus with a neck cylinder
-- The solid curl is a thick tube swept along a stretched spiral arc, tapering from base to tip, with rounded caps and its underside pressed flat (marvered) where it sits; it draws front faces only, since it's a closed solid
+- The solid curl follows a spine you draw in its own editor (seen from the front, over your sketch photo if you add one), with a thickness at each spine point eased smoothly between them, rounded caps, and its underside pressed flat (marvered) where it sits; it draws front faces only, since it's a closed solid. The default spine is traced from a pencil sketch
 - Bits are tapered tubes swept along a curve
 - Drawings use orthographic cameras sharing one scale; the outline style renders part IDs and surface normals offscreen and inks wherever the part changes or the surface folds
 - Undo and redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl+Y, or the ↶ ↷ buttons) step through up to 100 snapshots of the design; a change is recorded once things settle for 0.4 s, so one drag is one step
