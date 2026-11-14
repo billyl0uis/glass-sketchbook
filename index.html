@@ -105,6 +105,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
     <button class="chip" data-preset="flask">Flask with spouts</button>
     <button class="chip" data-preset="donut">Spiked donut</button>
     <button class="chip" data-preset="tank">Squared tank</button>
+    <button class="chip" data-preset="jaw">Sphere on a jaw</button>
   </div>
 </header>
 <main>
@@ -153,7 +154,8 @@ const DEFAULT = {
   donut:{R:.62,tube:.42,tall:1.08,flatten:.32,neckH:.55,neckW:.42},
   bits:{count:0,mode:'ring',shape:'spike',at:.8,from:.3,to:.7,len:.5,size:.12,curl:0},
   color:'clear', wraps:0, wrapColor:'opal',
-  open:{cut:0,tilt:0,lip:'fire'},
+  open:{cut:0,tilt:0,turn:0,lip:'fire'},
+  jaw:{on:false,at:.18,around:180,len:.45,size:.17},
   draw:{style:'both',height:20,unit:'cm'}
 };
 const PRESETS = {
@@ -162,7 +164,9 @@ const PRESETS = {
   flask:{profile:[[0,0],[.95,0],[.92,.38],[.62,.78],[.3,.95],[.26,1.15],[.26,1.9],[.3,1.96]],
     bits:{count:1,mode:'outline',shape:'tube',from:.28,to:.28,len:.55,size:.14,curl:.15}, color:'clear'},
   donut:{body:'donut', bits:{count:10,mode:'outline',shape:'spike',len:.6,size:.2,curl:0}, color:'clear'},
-  tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,lip:'ground'}}
+  tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,turn:0,lip:'ground'}},
+  jaw:{profile:[[0,0],[.45,.12],[.78,.45],[.9,.9],[.78,1.35],[.45,1.68],[0,1.8]], color:'cobalt',
+    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.4,size:.26}}
 };
 function clone(o){return JSON.parse(JSON.stringify(o))}
 function fromPreset(name){
@@ -216,7 +220,7 @@ function T(x,z){
   if(S.square>0){ const n=2+S.square*14; f=Math.pow(Math.pow(Math.abs(c),n)+Math.pow(Math.abs(s),n),-1/n); }
   return [r*f*c, r*f*s*S.flatten];
 }
-function sweep(base,dir,len,r0,r1,curl,open){
+function sweep(base,dir,len,r0,r1,curl,open,tipK=1){ // tipK: how pointed the closed end is (1 round, near 0 flat)
   const up=new THREE.Vector3(0,1,0);
   let side=new THREE.Vector3().crossVectors(dir,up); if(side.lengthSq()<1e-4) side.set(0,0,1); side.normalize();
   const bend=new THREE.Vector3().crossVectors(side,dir).normalize();
@@ -232,7 +236,7 @@ function sweep(base,dir,len,r0,r1,curl,open){
     const r=r0+(r1-r0)*s;
     for(let j=0;j<rad;j++){const a=j/rad*Math.PI*2;
       const v=p.clone().addScaledVector(side,Math.cos(a)*r).addScaledVector(n,Math.sin(a)*r); pos.push(v.x,v.y,v.z);}
-    if(i===segs) tip=p.clone().addScaledVector(t,r);
+    if(i===segs) tip=p.clone().addScaledVector(t,r*tipK);
   }
   for(let i=0;i<segs;i++)for(let j=0;j<rad;j++){
     const a=i*rad+j,b=i*rad+(j+1)%rad,c=a+rad,d=b+rad; idx.push(a,c,b,b,c,d);
@@ -272,47 +276,97 @@ function tAtHeight(curve,h){
 
 /* openings and cold-worked lips */
 const WALL=0.045; // drawn wall thickness for lips
-function cutPlane(ymax){
+// The cut is a flat plane that can face any way: tilt it from the top (0°) round to the
+// side (90°) for a side hole, and turn it to face any side of the piece. "cut" is how much
+// of the piece's depth in that direction is taken off.
+function cutPlane(pts){
   const O=S.open; if(!(O.cut>0.005)) return null;
-  const a=O.tilt*Math.PI/180;
-  return {n:new THREE.Vector3(Math.sin(a),Math.cos(a),0), y:(1-O.cut)*ymax};
+  const t=O.tilt*Math.PI/180, az=(O.turn||0)*Math.PI/180;
+  const n=new THREE.Vector3(Math.sin(t)*Math.cos(az),Math.cos(t),Math.sin(t)*Math.sin(az));
+  let lo=Infinity, hi=-Infinity; for(const p of pts){ const d=n.dot(p); if(d<lo) lo=d; if(d>hi) hi=d; }
+  return {n, d:hi-O.cut*(hi-lo)};
 }
 // signed distance to the cut plane: <=0 is glass you keep, >0 is cut away
-const sideOf=(pl,p)=> pl ? pl.n.x*p.x + pl.n.y*(p.y-pl.y) + pl.n.z*p.z : -1;
+const sideOf=(pl,p)=> pl ? pl.n.dot(p)-pl.d : -1;
 
-// samples: [{u, d}] up one meridian from bottom (u=0) to top; d = sideOf() at that point.
-// Return the profile parameter u where this meridian should end, or null to leave it uncut.
-function cutParam(samples){
-  // End at the first exit: like scoring and cracking off, everything above the line goes,
-  // even if the form dips back below the plane further up.
-  if(samples[0].d>0) return 0;
-  for(let i=1;i<samples.length;i++){
-    const a=samples[i-1], b=samples[i];
-    if(b.d>0) return a.u+(b.u-a.u)*a.d/(a.d-b.d);
+// Clip a mesh by the plane, triangle by triangle. Triangles that straddle the plane are split
+// at it, so the cut edge is exact wherever it falls: across the top, or as a hole in the side
+// with glass all around it. Returns the kept mesh plus the closed rim loop(s) of the opening.
+function clipByPlane(g,pl){
+  const P=g.attributes.position, U=g.attributes.uv, I=g.index.array, v=new THREE.Vector3();
+  const pos=[], uvs=[], out=[], remap=new Map(), cuts=new Map(), segs=[], d=new Float32Array(P.count);
+  for(let i=0;i<P.count;i++) d[i]=sideOf(pl,v.fromBufferAttribute(P,i));
+  const keep=i=>{ let j=remap.get(i); if(j===undefined){ j=pos.length/3; remap.set(i,j);
+    pos.push(P.getX(i),P.getY(i),P.getZ(i)); uvs.push(U.getX(i),U.getY(i)); } return j; };
+  const cut=(a,b)=>{ const key=a<b?a*1e6+b:b*1e6+a; let j=cuts.get(key); if(j!==undefined) return j;
+    const t=d[a]/(d[a]-d[b]); j=pos.length/3; cuts.set(key,j);
+    pos.push(P.getX(a)+(P.getX(b)-P.getX(a))*t, P.getY(a)+(P.getY(b)-P.getY(a))*t, P.getZ(a)+(P.getZ(b)-P.getZ(a))*t);
+    uvs.push(U.getX(a)+(U.getX(b)-U.getX(a))*t, U.getY(a)+(U.getY(b)-U.getY(a))*t); return j; };
+  for(let f=0;f<I.length;f+=3){
+    let a=I[f],b=I[f+1],c=I[f+2]; const ka=d[a]<=0, kb=d[b]<=0, kc=d[c]<=0, n=ka+kb+kc;
+    if(n===3){ out.push(keep(a),keep(b),keep(c)); continue; }
+    if(n===0) continue;
+    // rotate the odd vertex to the front, keeping the winding
+    const odd = n===1 ? (ka?0:kb?1:2) : (!ka?0:!kb?1:2);
+    if(odd===1) [a,b,c]=[b,c,a]; else if(odd===2) [a,b,c]=[c,a,b];
+    const e1=cut(a,b), e2=cut(a,c);
+    if(n===1) out.push(keep(a),e1,e2);
+    else { const xb=keep(b), xc=keep(c); out.push(e1,xb,xc, e1,xc,e2); }
+    segs.push([e1,e2]);
   }
-  return null;
+  // chain the cut segments into closed rim loops
+  const adj=new Map(), link=(x,y)=>{ if(x===y) return; if(!adj.has(x)) adj.set(x,[]); adj.get(x).push(y); };
+  segs.forEach(([x,y])=>{ link(x,y); link(y,x); });
+  const seen=new Set(), loops=[];
+  for(const s of adj.keys()){
+    if(seen.has(s)) continue;
+    const loop=[]; let prev=-1, cur=s;
+    while(cur!==undefined && !seen.has(cur)){ seen.add(cur); loop.push(cur);
+      const nx=(adj.get(cur)||[]).find(x=>x!==prev && !seen.has(x)); prev=cur; cur=nx; }
+    if(!(adj.get(loop[loop.length-1])||[]).includes(s)) continue; // not closed
+    const pts=[]; for(const i of loop){ const p=new THREE.Vector3(pos[i*3],pos[i*3+1],pos[i*3+2]);
+      if(!pts.length || p.distanceTo(pts[pts.length-1])>1e-4) pts.push(p); }
+    if(pts.length>=12) loops.push(pts);
+  }
+  const g2=new THREE.BufferGeometry();
+  g2.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g2.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  g2.setIndex(out); g2.computeVertexNormals();
+  return {geo:g2, loops};
 }
 
-// Lathe built one meridian at a time so each can end exactly on the cut plane.
-function buildBody(curve,pl){
-  const prof=curve.getPoints(140), NP=prof.length, last=NP-1, M=112;
-  const at=(phi,u)=>{ const i=Math.min(last-1,Math.floor(u)), f=u-i, a=prof[i], b=prof[i+1];
-    const r=Math.max(0.0001,a.x+(b.x-a.x)*f), y=a.y+(b.y-a.y)*f;
-    const [x,z]=T(r*Math.cos(phi),r*Math.sin(phi)); return new THREE.Vector3(x,y,z); };
-  const pos=[], uv=[], idx=[], rim=[];
-  for(let k=0;k<M;k++){
-    const phi=2*Math.PI*k/M; let uEnd=last;
-    if(pl){ const c=cutParam(prof.map((_,i)=>({u:i,d:sideOf(pl,at(phi,i))}))); if(c!=null) uEnd=Math.max(0,Math.min(last,c)); }
-    for(let i=0;i<NP;i++){ const u=uEnd*i/last, p=at(phi,u); pos.push(p.x,p.y,p.z); uv.push(k/M,u/last); }
-    rim.push(at(phi,uEnd));
-  }
+// Spun body (lathe with paddle/square applied), then cut if there is a cut.
+function buildBody(curve){
+  const prof=curve.getPoints(140), NP=prof.length, last=NP-1, M=112, up=new THREE.Vector3(0,1,0);
+  const P=[], pos=[], uv=[], idx=[];
+  for(let k=0;k<M;k++){ const phi=2*Math.PI*k/M;
+    for(let i=0;i<NP;i++){ const r=Math.max(0.0001,prof[i].x), [x,z]=T(r*Math.cos(phi),r*Math.sin(phi));
+      P.push(new THREE.Vector3(x,prof[i].y,z)); pos.push(x,prof[i].y,z); uv.push(k/M,i/last); } }
   for(let k=0;k<M;k++){ const k2=(k+1)%M; for(let i=0;i<last;i++){ const a=k*NP+i,b=k2*NP+i; idx.push(a,b,a+1,b,b+1,a+1); } }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
   g.setIndex(idx); g.computeVertexNormals();
-  // only a clean, fully open mouth gets a lip
-  const open=rim.every(p=>Math.hypot(p.x,p.z)>0.06);
-  return {geo:g, rim:open?rim:null};
+  // a profile that ends away from the axis is already open at the top
+  const top=[]; for(let k=0;k<M;k++) top.push(P[k*NP+last]);
+  const natural=top.every(p=>Math.hypot(p.x,p.z)>0.06);
+  const pl=cutPlane(P);
+  if(!pl) return {geo:g, plane:null, rims:natural?[{pts:top,n:up}]:[]};
+  const c=clipByPlane(g,pl); g.dispose();
+  const rims=c.loops.map(pts=>({pts,n:pl.n}));
+  if(natural && top.every(p=>sideOf(pl,p)<=0)) rims.push({pts:top,n:up});
+  return {geo:c.geo, plane:pl, rims};
+}
+
+// Jaw kickstand: once it's on, find the angle the piece tips to so the jaw and the body
+// both touch the table, the way it will sit.
+const restQ=new THREE.Quaternion(); let profTop=1;
+function restAngle(bodyG,jawG,axis){
+  const q=new THREE.Quaternion(), v=new THREE.Vector3();
+  const low=(g,th,step)=>{ q.setFromAxisAngle(axis,th); const p=g.attributes.position; let m=Infinity;
+    for(let i=0;i<p.count;i+=step){ v.fromBufferAttribute(p,i).applyQuaternion(q); if(v.y<m) m=v.y; } return m; };
+  const f=th=>low(jawG,th,1)-low(bodyG,th,3);
+  let a=-1.3, b=1.3, fa=f(a); if(fa*f(b)>0) return 0;
+  for(let i=0;i<40;i++){ const m=(a+b)/2, fm=f(m); if(fa*fm<=0) b=m; else { a=m; fa=fm; } }
+  return (a+b)/2;
 }
 function groundMat(){ const c=COLORS[S.color];
   return new THREE.MeshPhysicalMaterial({color:new THREE.Color(c.hex).lerp(new THREE.Color(0xffffff),.55),
@@ -321,11 +375,12 @@ function groundMat(){ const c=COLORS[S.color];
 function addLip(loop,n,glass){
   const L=S.open.lip;
   if(L==='fire'){ // flame-rounded edge: a soft bead the same glass as the body
-    piece.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(loop,true,'centripetal'),loop.length*2,WALL*.6,10,true),glass));
+    piece.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(loop,true,'centripetal'),Math.min(600,loop.length*2),WALL*.6,10,true),glass));
   } else if(L==='ground'){ // flat-ground and frosted: a U-shaped band whose top lies in the cut
     const pos=[], idx=[], N=loop.length, hw=WALL/2, dep=WALL*.7;
+    const cen=loop.reduce((s,p)=>s.add(p),new THREE.Vector3()).multiplyScalar(1/N);
     for(const P of loop){
-      const r=new THREE.Vector3(P.x,0,P.z).normalize(); r.addScaledVector(n,-r.dot(n)).normalize();
+      const r=P.clone().sub(cen); r.addScaledVector(n,-r.dot(n)).normalize();
       [[-hw,-dep],[-hw,0],[hw,0],[hw,-dep]].forEach(([o,d])=>{ const v=P.clone().addScaledVector(r,o).addScaledVector(n,d); pos.push(v.x,v.y,v.z); });
     }
     for(let k=0;k<N;k++){ const k2=(k+1)%N; for(let j=0;j<3;j++){ const a=k*4+j,b=k2*4+j; idx.push(a,b,a+1,b,b+1,a+1); } }
@@ -337,11 +392,12 @@ function addLip(loop,n,glass){
 function rebuild(){
   piece.children.slice().forEach(m=>{piece.remove(m); m.geometry.dispose(); if(m.material.map) m.material.map.dispose(); m.material.dispose();});
   const mat=makeMat(), add=g=>piece.add(new THREE.Mesh(g,mat));
+  restQ.identity();
   const B=S.bits, up=new THREE.Vector3(0,1,0), [r0,r1,open]=bitRadii();
   if(S.body==='bubble'){
-    const curve=profileCurve(), pl=cutPlane(Math.max(...S.profile.map(p=>p[1])));
-    const body=buildBody(curve,pl); add(body.geo);
-    if(body.rim) addLip(body.rim, pl?pl.n:new THREE.Vector3(0,1,0), mat);
+    const curve=profileCurve(), body=buildBody(curve), pl=body.plane; add(body.geo);
+    profTop=Math.max(...S.profile.map(p=>p[1]));
+    body.rims.forEach(r=>addLip(r.pts,r.n,mat));
     if(B.count>0){
       const list=[];
       if(B.mode==='ring'){ const t=tAtHeight(curve,B.at); for(let k=0;k<B.count;k++) list.push([t,2*Math.PI*k/B.count]); }
@@ -355,6 +411,23 @@ function rebuild(){
         const dir=h.multiplyScalar(n2.x).addScaledVector(up,n2.y).normalize();
         if(sideOf(pl,new THREE.Vector3(px,pt.y,pz))>0) continue; // bit was on glass that got cut off
         add(sweep(new THREE.Vector3(px,pt.y,pz),dir,B.len,r0,r1,B.curl,open));
+      }
+    }
+    const J=S.jaw;
+    if(J && J.on){
+      const t=tAtHeight(curve,J.at), pt=curve.getPointAt(t), tan=curve.getTangentAt(t), phi=J.around*Math.PI/180;
+      const n2=new THREE.Vector2(tan.y,-tan.x).normalize();
+      const [px,pz]=T(pt.x*Math.cos(phi),pt.x*Math.sin(phi)), base=new THREE.Vector3(px,pt.y,pz);
+      let hz=new THREE.Vector3(px,0,pz); if(hz.lengthSq()<1e-6) hz.set(Math.cos(phi),0,Math.sin(phi)); hz.normalize();
+      // out from the surface, then angled down toward the table
+      const outward=hz.clone().multiplyScalar(n2.x).addScaledVector(up,n2.y).normalize();
+      const dir=outward.multiplyScalar(Math.cos(.7)).addScaledVector(up,-Math.sin(.7)).normalize();
+      if(sideOf(pl,base)<=0){
+        const jg=sweep(base,dir,J.len,J.size,J.size*.8,0,false,.25); add(jg);
+        const axis=new THREE.Vector3().crossVectors(up,hz).normalize();
+        restQ.setFromAxisAngle(axis,restAngle(body.geo,jg,axis));
+        const m4=new THREE.Matrix4().makeRotationFromQuaternion(restQ);
+        piece.children.forEach(m=>m.geometry.applyMatrix4(m4));
       }
     }
   } else {
@@ -462,8 +535,9 @@ function renderShape(){
 function renderOpening(){
   const O=S.open, sec=h('div',{class:'section'}, h('h2',{text:'Opening and lip'}));
   if(S.body==='bubble') sec.append(
-    slider('Cut off the top',()=>O.cut,v=>O.cut=v,0,.6,.01,v=>v<.005?'none':Math.round(v*100)+'%'),
-    slider('Tilt the cut',()=>O.tilt,v=>O.tilt=v,-35,35,1,v=>Math.round(v)+'°'));
+    slider('How much to cut away',()=>O.cut,v=>O.cut=v,0,.6,.01,v=>v<.005?'none':Math.round(v*100)+'%'),
+    slider('Tilt the cut (90° = hole in the side)',()=>O.tilt,v=>O.tilt=v,-150,150,1,v=>Math.round(v)+'°'),
+    slider('Turn the cut around the piece',()=>O.turn||0,v=>O.turn=v,0,359,1,v=>Math.round(v)+'°'));
   if(S.body==='bubble' || S.donut.neckH>0){
     sec.append(seg('Lip finish',[['raw','As cut'],['fire','Fire-polished'],['ground','Ground flat']],()=>O.lip,v=>O.lip=v),
       h('p',{class:'hint',text:'Fire-polished rounds the edge in the glory hole. Ground flat is cold-worked on the wheel, so it shows frosted. Lips appear wherever the mouth is open.'}));
@@ -511,6 +585,17 @@ function renderBits(){
     slider('Length (how far you pull)',()=>B.len,v=>B.len=v,.05,1.6,.01),
     slider('Bit size at the base',()=>B.size,v=>B.size=v,.03,.4,.005),
     slider('Curl (down to up)',()=>B.curl,v=>B.curl=v,-.8,1.4,.01));
+  if(S.body==='bubble'){
+    const J=S.jaw, sec=h('div',{class:'section'}, h('h2',{text:'Jaw kickstand'}));
+    sec.append(seg('Jaw',[[false,'Off'],[true,'On']],()=>J.on,v=>J.on=v));
+    if(J.on) sec.append(
+      slider('Height on piece',()=>J.at,v=>J.at=v,0,.8,.01,v=>Math.round(v*100)+'%'),
+      slider('Turn around the piece',()=>J.around,v=>J.around=v,0,359,1,v=>Math.round(v)+'°'),
+      slider('Length',()=>J.len,v=>J.len=v,.1,1.1,.01),
+      slider('Thickness',()=>J.size,v=>J.size=v,.05,.4,.005));
+    sec.append(h('p',{class:'hint',text:'A pulled foot of glass the piece leans on. It tips over to rest on the jaw and its own body, the way it will sit on the table. Set it to the same turn as a side hole to put the hole above it.'}));
+    content.append(sec);
+  }
 }
 function renderColor(){
   content.append(h('span',{class:'seg-label',text:'Glass color'}), swatches(()=>S.color,v=>S.color=v),
@@ -583,7 +668,8 @@ function orthoViews(){
   const box=new THREE.Box3().setFromObject(piece), size=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
   const k=CELL/(Math.max(size.x,size.y,size.z)*1.4), half=CELL/(2*k), Y=new THREE.Vector3(0,1,0);
   const cam=(off,up)=>{ const c=new THREE.OrthographicCamera(-half,half,half,-half,0.01,100);
-    c.position.copy(ctr).add(off); c.up.copy(up); c.lookAt(ctr); c.updateMatrixWorld(); return c; };
+    c.position.copy(ctr).add(off); c.up.copy(up); c.lookAt(ctr); c.updateMatrixWorld();
+    c.matrixWorldInverse.copy(c.matrixWorld).invert(); return c; };
   return {k,size,views:[
     {name:'Front',cam:cam(new THREE.Vector3(0,0,20),Y),w:size.x,h:size.y},
     {name:'Side', cam:cam(new THREE.Vector3(20,0,0),Y),w:size.z,h:size.y},
@@ -656,6 +742,7 @@ async function makeSheet(){
   g.fillText('Orthographic views · '+desc.join(' · '),M,M+48);
   g.textAlign='right'; g.fillText(new Date().toLocaleDateString(),W-M,M+12); g.textAlign='left';
 
+  const axisW = S.body==='bubble' ? [0,profTop].map(y=>new THREE.Vector3(0,y,0).applyQuaternion(restQ).add(piece.position)) : null;
   const shadowWas=shadow.visible; shadow.visible=false;
   rows.forEach((style,ri)=>views.forEach((v,vi)=>{
     const x0=M+vi*(CELL+G), y0=HEAD+ri*ROWH, cx=x0+CELL/2, cy=y0+CELL/2;
@@ -665,8 +752,14 @@ async function makeSheet(){
     } else g.drawImage(outlineCell(v.cam),x0,y0);
     g.strokeStyle='#cbd3d8'; g.lineWidth=1; g.strokeRect(x0+.5,y0+.5,CELL-1,CELL-1);
     const hw=v.w*k/2, hh=v.h*k/2, L=cx-hw, R=cx+hw, T=cy-hh, B=cy+hh;
-    // centerlines: the piece's spin axis in front and side, crosshair on top
-    if(v.name==='Top'){ centerLine(g,cx,T-24,cx,B+24); centerLine(g,L-24,cy,R+24,cy); }
+    // centerlines: the piece's spin axis, drawn where it really is (tipped, if it sits on a jaw);
+    // seen end-on it becomes a crosshair
+    if(axisW){
+      const [A,Bp]=axisW.map(p=>{ const q=p.clone().project(v.cam); return [x0+(q.x+1)/2*CELL, y0+(1-q.y)/2*CELL]; });
+      const dx=Bp[0]-A[0], dy=Bp[1]-A[1], len=Math.hypot(dx,dy);
+      if(len<3){ centerLine(g,A[0],T-24,A[0],B+24); centerLine(g,L-24,A[1],R+24,A[1]); }
+      else { const ux=dx/len, uy=dy/len; centerLine(g,A[0]-ux*24,A[1]-uy*24,Bp[0]+ux*30,Bp[1]+uy*30); }
+    } else if(v.name==='Top'){ centerLine(g,cx,T-24,cx,B+24); centerLine(g,L-24,cy,R+24,cy); }
     else centerLine(g,cx,T-30,cx,B+24);
     if(per){
       if(v.name!=='Top'){ const dy=B+40; extLine(g,L,B+6,L,dy+10); extLine(g,R,B+6,R,dy+10); dimLine(g,L,dy,R,dy,fmt(v.w),false); }
