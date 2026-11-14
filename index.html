@@ -155,7 +155,7 @@ const DEFAULT = {
   bits:{count:0,mode:'ring',shape:'spike',at:.8,from:.3,to:.7,len:.5,size:.12,curl:0},
   color:'clear', wraps:0, wrapColor:'opal',
   open:{cut:0,tilt:0,turn:0,lip:'fire'},
-  jaw:{on:false,at:.18,around:180,len:.45,size:.17},
+  jaw:{on:false,at:.18,around:180,len:.45,size:.17,square:0,hollow:false},
   draw:{style:'both',height:20,unit:'cm'}
 };
 const PRESETS = {
@@ -166,7 +166,7 @@ const PRESETS = {
   donut:{body:'donut', bits:{count:10,mode:'outline',shape:'spike',len:.6,size:.2,curl:0}, color:'clear'},
   tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,turn:0,lip:'ground'}},
   jaw:{profile:[[0,0],[.45,.12],[.78,.45],[.9,.9],[.78,1.35],[.45,1.68],[0,1.8]], color:'cobalt',
-    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.4,size:.26}}
+    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.4,size:.26,square:.85,hollow:true}}
 };
 function clone(o){return JSON.parse(JSON.stringify(o))}
 function fromPreset(name){
@@ -220,11 +220,16 @@ function T(x,z){
   if(S.square>0){ const n=2+S.square*14; f=Math.pow(Math.pow(Math.abs(c),n)+Math.pow(Math.abs(s),n),-1/n); }
   return [r*f*c, r*f*s*S.flatten];
 }
-function sweep(base,dir,len,r0,r1,curl,open,tipK=1){ // tipK: how pointed the closed end is (1 round, near 0 flat)
-  const up=new THREE.Vector3(0,1,0);
-  let side=new THREE.Vector3().crossVectors(dir,up); if(side.lengthSq()<1e-4) side.set(0,0,1); side.normalize();
-  const bend=new THREE.Vector3().crossVectors(side,dir).normalize();
-  const segs=28, rad=16, pos=[], idx=[];
+function tubeAxes(dir){ // the two directions across a swept tube; its square sides line up with these
+  let side=new THREE.Vector3().crossVectors(dir,new THREE.Vector3(0,1,0)); if(side.lengthSq()<1e-4) side.set(0,0,1); side.normalize();
+  return [side, new THREE.Vector3().crossVectors(side,dir).normalize()];
+}
+// superellipse: how far out to push a point at angle (c,s) so the circle becomes a rounded square
+const squareF=(c,s,sq)=> sq>0 ? Math.pow(Math.pow(Math.abs(c),2+sq*10)+Math.pow(Math.abs(s),2+sq*10),-1/(2+sq*10)) : 1;
+// tipK: how pointed the closed end is (1 round, near 0 flat); sq: 0 round to 1 square
+function sweep(base,dir,len,r0,r1,curl,open,tipK=1,sq=0){
+  const [side,bend]=tubeAxes(dir);
+  const segs=28, rad=sq>0?40:16, pos=[], idx=[];
   const back=r0*0.7, L=len+back;
   const start=base.clone().addScaledVector(dir,-back);
   let tip;
@@ -234,8 +239,8 @@ function sweep(base,dir,len,r0,r1,curl,open,tipK=1){ // tipK: how pointed the cl
     const t=dir.clone().multiplyScalar(L).addScaledVector(bend,2*curl*L*s).normalize();
     const n=new THREE.Vector3().crossVectors(side,t).normalize();
     const r=r0+(r1-r0)*s;
-    for(let j=0;j<rad;j++){const a=j/rad*Math.PI*2;
-      const v=p.clone().addScaledVector(side,Math.cos(a)*r).addScaledVector(n,Math.sin(a)*r); pos.push(v.x,v.y,v.z);}
+    for(let j=0;j<rad;j++){const a=j/rad*Math.PI*2, c=Math.cos(a), sn=Math.sin(a), f=squareF(c,sn,sq);
+      const v=p.clone().addScaledVector(side,c*f*r).addScaledVector(n,sn*f*r); pos.push(v.x,v.y,v.z);}
     if(i===segs) tip=p.clone().addScaledVector(t,r*tipK);
   }
   for(let i=0;i<segs;i++)for(let j=0;j<rad;j++){
@@ -244,6 +249,7 @@ function sweep(base,dir,len,r0,r1,curl,open,tipK=1){ // tipK: how pointed the cl
   if(!open){ const ti=pos.length/3; pos.push(tip.x,tip.y,tip.z);
     for(let j=0;j<rad;j++){const a=segs*rad+j,b=segs*rad+(j+1)%rad; idx.push(a,ti,b);} }
   const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals();
+  g.userData.endRing=[]; for(let j=0;j<rad;j++){ const i=(segs*rad+j)*3; g.userData.endRing.push(new THREE.Vector3(pos[i],pos[i+1],pos[i+2])); }
   return g;
 }
 function bitRadii(){ const b=S.bits;
@@ -292,10 +298,11 @@ const sideOf=(pl,p)=> pl ? pl.n.dot(p)-pl.d : -1;
 // Clip a mesh by the plane, triangle by triangle. Triangles that straddle the plane are split
 // at it, so the cut edge is exact wherever it falls: across the top, or as a hole in the side
 // with glass all around it. Returns the kept mesh plus the closed rim loop(s) of the opening.
-function clipByPlane(g,pl){
+// dist(p): <=0 keep, >0 cut away (a plane, or the footprint of the jaw's channel)
+function clipBy(g,dist){
   const P=g.attributes.position, U=g.attributes.uv, I=g.index.array, v=new THREE.Vector3();
   const pos=[], uvs=[], out=[], remap=new Map(), cuts=new Map(), segs=[], d=new Float32Array(P.count);
-  for(let i=0;i<P.count;i++) d[i]=sideOf(pl,v.fromBufferAttribute(P,i));
+  for(let i=0;i<P.count;i++) d[i]=dist(v.fromBufferAttribute(P,i));
   const keep=i=>{ let j=remap.get(i); if(j===undefined){ j=pos.length/3; remap.set(i,j);
     pos.push(P.getX(i),P.getY(i),P.getZ(i)); uvs.push(U.getX(i),U.getY(i)); } return j; };
   const cut=(a,b)=>{ const key=a<b?a*1e6+b:b*1e6+a; let j=cuts.get(key); if(j!==undefined) return j;
@@ -334,8 +341,31 @@ function clipByPlane(g,pl){
   return {geo:g2, loops};
 }
 
+// The jaw's place on the body: where it starts, which way it points, and its tube axes.
+function jawFrame(curve){
+  const J=S.jaw; if(!J||!J.on) return null;
+  const up=new THREE.Vector3(0,1,0), t=tAtHeight(curve,J.at), pt=curve.getPointAt(t), tan=curve.getTangentAt(t), phi=J.around*Math.PI/180;
+  const n2=new THREE.Vector2(tan.y,-tan.x).normalize();
+  const [px,pz]=T(pt.x*Math.cos(phi),pt.x*Math.sin(phi)), base=new THREE.Vector3(px,pt.y,pz);
+  const hz=new THREE.Vector3(px,0,pz); if(hz.lengthSq()<1e-6) hz.set(Math.cos(phi),0,Math.sin(phi)); hz.normalize();
+  // out from the surface, then angled down toward the table
+  const outward=hz.clone().multiplyScalar(n2.x).addScaledVector(up,n2.y).normalize();
+  const dir=outward.multiplyScalar(Math.cos(.7)).addScaledVector(up,-Math.sin(.7)).normalize();
+  const [side,bend]=tubeAxes(dir);
+  return {base,dir,hz,side,bend};
+}
+// The second hole: the jaw's own footprint, pushed through the wall so the hollow jaw
+// opens into the inside of the piece. Only near the jaw, so the far wall stays whole.
+function channelDist(jf,r,sq){
+  const v=new THREE.Vector3(), depth=r*3;
+  return p=>{ v.copy(p).sub(jf.base); if(v.dot(jf.dir)<-depth) return -1;
+    const a=v.dot(jf.side)/r, b=v.dot(jf.bend)/r, m=Math.hypot(a,b), f=m>1e-9?squareF(a/m,b/m,sq):1;
+    return (1-m/f)*r; };
+}
+
 // Spun body (lathe with paddle/square applied), then cut if there is a cut.
-function buildBody(curve){
+// hole: optional {dist, at} for the jaw channel, skipped if the main cut took that glass away.
+function buildBody(curve,hole){
   const prof=curve.getPoints(140), NP=prof.length, last=NP-1, M=112, up=new THREE.Vector3(0,1,0);
   const P=[], pos=[], uv=[], idx=[];
   for(let k=0;k<M;k++){ const phi=2*Math.PI*k/M;
@@ -349,11 +379,15 @@ function buildBody(curve){
   const top=[]; for(let k=0;k<M;k++) top.push(P[k*NP+last]);
   const natural=top.every(p=>Math.hypot(p.x,p.z)>0.06);
   const pl=cutPlane(P);
-  if(!pl) return {geo:g, plane:null, rims:natural?[{pts:top,n:up}]:[]};
-  const c=clipByPlane(g,pl); g.dispose();
-  const rims=c.loops.map(pts=>({pts,n:pl.n}));
-  if(natural && top.every(p=>sideOf(pl,p)<=0)) rims.push({pts:top,n:up});
-  return {geo:c.geo, plane:pl, rims};
+  let geo=g, rims=natural?[{pts:top,n:up}]:[];
+  if(pl){
+    const c=clipBy(g,p=>sideOf(pl,p)); g.dispose(); geo=c.geo;
+    rims=c.loops.map(pts=>({pts,n:pl.n}));
+    if(natural && top.every(p=>sideOf(pl,p)<=0)) rims.push({pts:top,n:up});
+  }
+  // the channel's edge is hidden inside the jaw, so it gets no lip
+  if(hole && sideOf(pl,hole.at)<=0){ const c=clipBy(geo,hole.dist); geo.dispose(); geo=c.geo; }
+  return {geo, plane:pl, rims};
 }
 
 // Jaw kickstand: once it's on, find the angle the piece tips to so the jaw and the body
@@ -395,7 +429,8 @@ function rebuild(){
   restQ.identity();
   const B=S.bits, up=new THREE.Vector3(0,1,0), [r0,r1,open]=bitRadii();
   if(S.body==='bubble'){
-    const curve=profileCurve(), body=buildBody(curve), pl=body.plane; add(body.geo);
+    const curve=profileCurve(), J=S.jaw, jf=jawFrame(curve), jsq=J.square||0;
+    const body=buildBody(curve, jf&&J.hollow ? {dist:channelDist(jf,J.size*.95,jsq), at:jf.base} : null), pl=body.plane; add(body.geo);
     profTop=Math.max(...S.profile.map(p=>p[1]));
     body.rims.forEach(r=>addLip(r.pts,r.n,mat));
     if(B.count>0){
@@ -413,18 +448,12 @@ function rebuild(){
         add(sweep(new THREE.Vector3(px,pt.y,pz),dir,B.len,r0,r1,B.curl,open));
       }
     }
-    const J=S.jaw;
-    if(J && J.on){
-      const t=tAtHeight(curve,J.at), pt=curve.getPointAt(t), tan=curve.getTangentAt(t), phi=J.around*Math.PI/180;
-      const n2=new THREE.Vector2(tan.y,-tan.x).normalize();
-      const [px,pz]=T(pt.x*Math.cos(phi),pt.x*Math.sin(phi)), base=new THREE.Vector3(px,pt.y,pz);
-      let hz=new THREE.Vector3(px,0,pz); if(hz.lengthSq()<1e-6) hz.set(Math.cos(phi),0,Math.sin(phi)); hz.normalize();
-      // out from the surface, then angled down toward the table
-      const outward=hz.clone().multiplyScalar(n2.x).addScaledVector(up,n2.y).normalize();
-      const dir=outward.multiplyScalar(Math.cos(.7)).addScaledVector(up,-Math.sin(.7)).normalize();
-      if(sideOf(pl,base)<=0){
-        const jg=sweep(base,dir,J.len,J.size,J.size*.8,0,false,.25); add(jg);
-        const axis=new THREE.Vector3().crossVectors(up,hz).normalize();
+    if(jf && sideOf(pl,jf.base)<=0){
+      {
+        // hollow: an open tube with a lip at its mouth; solid: a closed stub with a flat end
+        const jg=sweep(jf.base,jf.dir,J.len,J.size,J.size*.8,0,!!J.hollow,.25,jsq); add(jg);
+        if(J.hollow) addLip(jg.userData.endRing,jf.dir,mat);
+        const axis=new THREE.Vector3().crossVectors(up,jf.hz).normalize();
         restQ.setFromAxisAngle(axis,restAngle(body.geo,jg,axis));
         const m4=new THREE.Matrix4().makeRotationFromQuaternion(restQ);
         piece.children.forEach(m=>m.geometry.applyMatrix4(m4));
@@ -589,6 +618,8 @@ function renderBits(){
     const J=S.jaw, sec=h('div',{class:'section'}, h('h2',{text:'Jaw kickstand'}));
     sec.append(seg('Jaw',[[false,'Off'],[true,'On']],()=>J.on,v=>J.on=v));
     if(J.on) sec.append(
+      seg('Inside',[[false,'Solid'],[true,'Hollow, opens inside']],()=>!!J.hollow,v=>J.hollow=v),
+      slider('Square it up',()=>J.square||0,v=>J.square=v,0,1,.01,v=>v<.01?'round':Math.round(v*100)+'%'),
       slider('Height on piece',()=>J.at,v=>J.at=v,0,.8,.01,v=>Math.round(v*100)+'%'),
       slider('Turn around the piece',()=>J.around,v=>J.around=v,0,359,1,v=>Math.round(v)+'°'),
       slider('Length',()=>J.len,v=>J.len=v,.1,1.1,.01),
