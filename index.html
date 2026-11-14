@@ -49,6 +49,7 @@ main{flex:1; display:flex; flex-direction:column; min-height:0}
 #behind{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none; z-index:0; display:none}
 .stage-tools{position:absolute; right:10px; bottom:10px; display:flex; gap:6px; z-index:2}
 .stage-tools button{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 10px; font-size:13px}
+.stage-tools button:disabled{opacity:.4; cursor:default}
 .stage-tools button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
 #panel{flex:1 1 50%; min-height:0; display:flex; flex-direction:column; background:var(--panel); border-top:1px solid var(--line)}
 .tabs{display:flex; border-bottom:1px solid var(--line)}
@@ -112,6 +113,8 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
   <div id="stage">
     <img id="behind" alt="">
     <div class="stage-tools">
+      <button id="undoBtn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled>↶</button>
+      <button id="redoBtn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
       <button id="drawBtn">Drawing</button>
       <button id="spinBtn" aria-pressed="false">Spin</button>
       <button id="viewBtn">Reset view</button>
@@ -166,7 +169,7 @@ const PRESETS = {
   donut:{body:'donut', bits:{count:10,mode:'outline',shape:'spike',len:.6,size:.2,curl:0}, color:'clear'},
   tank:{profile:[[0,0],[.85,0],[.95,.08],[.95,1.15],[.93,1.2]], flatten:.62, square:1, color:'clear', open:{cut:0,tilt:0,turn:0,lip:'ground'}},
   jaw:{profile:[[0,0],[.45,.12],[.78,.45],[.9,.9],[.78,1.35],[.45,1.68],[0,1.8]], color:'cobalt',
-    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.4,size:.26,square:.85,hollow:true}}
+    open:{cut:.08,tilt:90,turn:180,lip:'fire'}, jaw:{on:true,at:.15,around:180,len:.55,size:.26,square:.85,hollow:true,nose:.7}}
 };
 function clone(o){return JSON.parse(JSON.stringify(o))}
 function fromPreset(name){
@@ -180,7 +183,23 @@ let S;
 try{ const saved = localStorage.getItem('glass-sketchbook-v1'); S = saved ? Object.assign(clone(DEFAULT), JSON.parse(saved)) : fromPreset('onion'); }
 catch(e){ S = fromPreset('onion'); }
 let saveT;
-function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{localStorage.setItem('glass-sketchbook-v1', JSON.stringify(S))}catch(e){} },300); }
+function save(){ record(); clearTimeout(saveT); saveT=setTimeout(()=>{ try{localStorage.setItem('glass-sketchbook-v1', JSON.stringify(S))}catch(e){} },300); }
+
+/* undo / redo: snapshots of the design (drawing-sheet settings aside). A change is recorded
+   once things go quiet for a moment, so one slider drag or one point drag is one step. */
+const snap=()=>{ const o=Object.assign({},S); delete o.draw; return JSON.stringify(o); };
+let hist=[snap()], hi=0, recT=null, restoring=false;
+function commit(){ clearTimeout(recT); recT=null; const j=snap(); if(j===hist[hi]) return;
+  hist=hist.slice(0,hi+1); hist.push(j); if(hist.length>100) hist.shift(); hi=hist.length-1; undoUI(); }
+function record(){ if(restoring) return; clearTimeout(recT); recT=setTimeout(commit,400); }
+function stepHistory(step){
+  if(recT) commit(); // a change still settling counts before we step back over it
+  const k=hi+step; if(k<0||k>=hist.length) return;
+  hi=k; const draw=S.draw; S=JSON.parse(hist[hi]); S.draw=draw;
+  restoring=true; piece.position.set(0,0,0); rebuild(); render(); save(); restoring=false; undoUI();
+}
+function undoUI(){ const u=document.getElementById('undoBtn'), r=document.getElementById('redoBtn');
+  if(u){ u.disabled=hi<=0; r.disabled=hi>=hist.length-1; } }
 
 /* ---------- 3D scene ---------- */
 const stage = document.getElementById('stage');
@@ -304,11 +323,11 @@ function clipBy(g,dist){
   const pos=[], uvs=[], out=[], remap=new Map(), cuts=new Map(), segs=[], d=new Float32Array(P.count);
   for(let i=0;i<P.count;i++) d[i]=dist(v.fromBufferAttribute(P,i));
   const keep=i=>{ let j=remap.get(i); if(j===undefined){ j=pos.length/3; remap.set(i,j);
-    pos.push(P.getX(i),P.getY(i),P.getZ(i)); uvs.push(U.getX(i),U.getY(i)); } return j; };
+    pos.push(P.getX(i),P.getY(i),P.getZ(i)); if(U) uvs.push(U.getX(i),U.getY(i)); } return j; };
   const cut=(a,b)=>{ const key=a<b?a*1e6+b:b*1e6+a; let j=cuts.get(key); if(j!==undefined) return j;
     const t=d[a]/(d[a]-d[b]); j=pos.length/3; cuts.set(key,j);
     pos.push(P.getX(a)+(P.getX(b)-P.getX(a))*t, P.getY(a)+(P.getY(b)-P.getY(a))*t, P.getZ(a)+(P.getZ(b)-P.getZ(a))*t);
-    uvs.push(U.getX(a)+(U.getX(b)-U.getX(a))*t, U.getY(a)+(U.getY(b)-U.getY(a))*t); return j; };
+    if(U) uvs.push(U.getX(a)+(U.getX(b)-U.getX(a))*t, U.getY(a)+(U.getY(b)-U.getY(a))*t); return j; };
   for(let f=0;f<I.length;f+=3){
     let a=I[f],b=I[f+1],c=I[f+2]; const ka=d[a]<=0, kb=d[b]<=0, kc=d[c]<=0, n=ka+kb+kc;
     if(n===3){ out.push(keep(a),keep(b),keep(c)); continue; }
@@ -336,7 +355,7 @@ function clipBy(g,dist){
     if(pts.length>=12) loops.push(pts);
   }
   const g2=new THREE.BufferGeometry();
-  g2.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g2.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  g2.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); if(U) g2.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
   g2.setIndex(out); g2.computeVertexNormals();
   return {geo:g2, loops};
 }
@@ -361,6 +380,17 @@ function channelDist(jf,r,sq){
   return p=>{ v.copy(p).sub(jf.base); if(v.dot(jf.dir)<-depth) return -1;
     const a=v.dot(jf.side)/r, b=v.dot(jf.bend)/r, m=Math.hypot(a,b), f=m>1e-9?squareF(a/m,b/m,sq):1;
     return (1-m/f)*r; };
+}
+
+// The nostril: an oval opening in the jaw's upper face, halfway along it. Through it you
+// look down the hollow jaw and its channel into the inside of the piece.
+function noseCut(jf,J){
+  const up=new THREE.Vector3(0,1,0), top=up.clone().addScaledVector(jf.dir,-up.dot(jf.dir)).normalize();
+  const lat=new THREE.Vector3().crossVectors(jf.dir,top).normalize(), v=new THREE.Vector3();
+  // the jaw's first stretch is buried in the body's wall, so "midway" is midway along the part you can see
+  const s=J.nose??.7, mid=J.len*.42, w=Math.max(.02,J.len*.4*s), hw=Math.max(.02,J.size*.85*s);
+  return {top, dist:p=>{ v.copy(p).sub(jf.base); if(v.dot(top)<=0) return -1; // upper face only
+    const a=(v.dot(jf.dir)-mid)/w, b=v.dot(lat)/hw; return (1-Math.hypot(a,b))*Math.min(w,hw); }};
 }
 
 // Spun body (lathe with paddle/square applied), then cut if there is a cut.
@@ -450,9 +480,11 @@ function rebuild(){
     }
     if(jf && sideOf(pl,jf.base)<=0){
       {
-        // hollow: an open tube with a lip at its mouth; solid: a closed stub with a flat end
-        const jg=sweep(jf.base,jf.dir,J.len,J.size,J.size*.8,0,!!J.hollow,.25,jsq); add(jg);
-        if(J.hollow) addLip(jg.userData.endRing,jf.dir,mat);
+        // a stub with a flat end on the table; hollow ones get the nostril opening midway
+        let jg=sweep(jf.base,jf.dir,J.len,J.size,J.size*.8,0,false,.25,jsq);
+        if(J.hollow){ const nc=noseCut(jf,J), c=clipBy(jg,nc.dist); jg.dispose(); jg=c.geo; add(jg);
+          c.loops.forEach(l=>addLip(l,nc.top,mat)); }
+        else add(jg);
         const axis=new THREE.Vector3().crossVectors(up,jf.hz).normalize();
         restQ.setFromAxisAngle(axis,restAngle(body.geo,jg,axis));
         const m4=new THREE.Matrix4().makeRotationFromQuaternion(restQ);
@@ -617,13 +649,14 @@ function renderBits(){
   if(S.body==='bubble'){
     const J=S.jaw, sec=h('div',{class:'section'}, h('h2',{text:'Jaw kickstand'}));
     sec.append(seg('Jaw',[[false,'Off'],[true,'On']],()=>J.on,v=>J.on=v));
-    if(J.on) sec.append(
-      seg('Inside',[[false,'Solid'],[true,'Hollow, opens inside']],()=>!!J.hollow,v=>J.hollow=v),
+    if(J.on) sec.append(...[
+      seg('Inside',[[false,'Solid'],[true,'Hollow, with an opening']],()=>!!J.hollow,v=>J.hollow=v),
+      J.hollow ? slider('Opening size',()=>J.nose??.7,v=>J.nose=v,.15,1,.01,v=>Math.round(v*100)+'%') : null,
       slider('Square it up',()=>J.square||0,v=>J.square=v,0,1,.01,v=>v<.01?'round':Math.round(v*100)+'%'),
       slider('Height on piece',()=>J.at,v=>J.at=v,0,.8,.01,v=>Math.round(v*100)+'%'),
       slider('Turn around the piece',()=>J.around,v=>J.around=v,0,359,1,v=>Math.round(v)+'°'),
       slider('Length',()=>J.len,v=>J.len=v,.1,1.1,.01),
-      slider('Thickness',()=>J.size,v=>J.size=v,.05,.4,.005));
+      slider('Thickness',()=>J.size,v=>J.size=v,.05,.4,.005)].filter(Boolean));
     sec.append(h('p',{class:'hint',text:'A pulled foot of glass the piece leans on. It tips over to rest on the jaw and its own body, the way it will sit on the table. Set it to the same turn as a side hole to put the hole above it.'}));
     content.append(sec);
   }
@@ -821,6 +854,16 @@ function renderDrawOpts(){
   inp.oninput=()=>{ D.height=Math.max(0,+inp.value||0); save(); refreshDrawing(); };
   box.append(style, units, h('div',{class:'row num'}, h('label',{class:'seg-label',for:'drawH',text:'Real height of the piece (blank for no measurements)'}), inp));
 }
+document.getElementById('undoBtn').onclick=()=>stepHistory(-1);
+document.getElementById('redoBtn').onclick=()=>stepHistory(1);
+document.addEventListener('keydown',e=>{
+  if(!(e.ctrlKey||e.metaKey) || e.altKey) return;
+  const k=e.key.toLowerCase(); if(k!=='z' && k!=='y') return;
+  const t=e.target; // leave typing fields their own undo
+  if(t && (t.tagName==='TEXTAREA' || (t.tagName==='INPUT' && !['range','checkbox','file'].includes(t.type)))) return;
+  if(drawDlg.open) return;
+  e.preventDefault(); stepHistory(k==='y'||e.shiftKey ? 1 : -1);
+});
 document.getElementById('drawBtn').onclick=()=>{ renderDrawOpts(); drawPrev.removeAttribute('src'); drawDlg.showModal(); refreshDrawing(); };
 document.getElementById('drawSave').onclick=()=>{ if(!sheet) return;
   sheet.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b);
