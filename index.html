@@ -74,6 +74,8 @@ input[type=range]{width:100%; accent-color:var(--accent)}
 .sw{border:1px solid var(--line); background:transparent; border-radius:10px; padding:8px 4px 6px; display:flex; flex-direction:column; align-items:center; gap:4px; font-size:12px}
 .sw i{width:26px; height:26px; border-radius:50%; display:block; border:1px solid rgba(127,127,127,.35)}
 .sw[aria-pressed="true"]{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent)}
+.sw-group{display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 6px}
+input[type=color]{width:44px; height:32px; padding:0; border:1px solid var(--line); border-radius:8px; background:none; cursor:pointer}
 label.file{display:inline-block; border:1px solid var(--accent); color:var(--accent); border-radius:9px; padding:7px 14px; cursor:pointer; font-weight:600}
 label.file input{position:absolute; opacity:0; width:1px; height:1px}
 .check{display:flex; gap:8px; align-items:center; font-size:14px; margin-top:10px}
@@ -150,19 +152,36 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// Furnace glass colors. op is how much light the glass blocks (transparent ~.3–.65, opaque/opal ~.9+).
 const COLORS = {
-  clear:{n:'Clear',hex:'#dcecf1',op:.3}, cobalt:{n:'Cobalt',hex:'#1f45b8',op:.62},
-  amber:{n:'Amber',hex:'#c8761a',op:.55}, sea:{n:'Sea green',hex:'#3fa38a',op:.5},
-  ruby:{n:'Ruby',hex:'#b0173a',op:.62}, smoke:{n:'Smoke',hex:'#4a4f55',op:.6},
-  opal:{n:'Opal white',hex:'#f1efe8',op:.93}, black:{n:'Black',hex:'#161616',op:.97}
+  // transparent
+  clear:{n:'Clear',hex:'#dcecf1',op:.3},          aqua:{n:'Aqua',hex:'#3fb7c9',op:.48},
+  lightblue:{n:'Light blue',hex:'#3d7fd6',op:.5},  cobalt:{n:'Cobalt',hex:'#1f45b8',op:.62},
+  teal:{n:'Teal',hex:'#12807e',op:.55},            sea:{n:'Sea green',hex:'#3fa38a',op:.5},
+  emerald:{n:'Emerald',hex:'#1f8f4a',op:.58},      olive:{n:'Olive',hex:'#6b7a2a',op:.55},
+  lime:{n:'Lime',hex:'#a8c43a',op:.5},             yellow:{n:'Yellow',hex:'#e7c51f',op:.5},
+  amber:{n:'Amber',hex:'#c8761a',op:.55},          orange:{n:'Orange',hex:'#e8721c',op:.55},
+  ruby:{n:'Ruby',hex:'#b0173a',op:.62},            pink:{n:'Gold ruby pink',hex:'#e05a8a',op:.5},
+  neo:{n:'Neodymium',hex:'#a88fcf',op:.45},        amethyst:{n:'Amethyst',hex:'#7a3b8f',op:.6},
+  violet:{n:'Violet',hex:'#4b2a8c',op:.62},        topaz:{n:'Topaz brown',hex:'#7a4a1f',op:.6},
+  smoke:{n:'Smoke',hex:'#4a4f55',op:.6},
+  // opaque / opal
+  opal:{n:'Opal white',hex:'#f1efe8',op:.93,opq:1}, gray:{n:'Gray',hex:'#8c9399',op:.93,opq:1},
+  black:{n:'Black',hex:'#161616',op:.97,opq:1},     red:{n:'Red',hex:'#c4232b',op:.95,opq:1},
+  oporange:{n:'Opal orange',hex:'#ec6a1a',op:.95,opq:1}, opyellow:{n:'Opal yellow',hex:'#f2c230',op:.95,opq:1},
+  opgreen:{n:'Opal green',hex:'#2f9a4c',op:.94,opq:1},   turquoise:{n:'Turquoise',hex:'#2bb3b1',op:.93,opq:1},
+  sky:{n:'Sky blue',hex:'#6fb6e8',op:.92,opq:1},    oppink:{n:'Pink',hex:'#f1a6c1',op:.92,opq:1},
+  lilac:{n:'Lilac',hex:'#b9a2dc',op:.92,opq:1}
 };
+// a color by key, including the one you mix yourself
+const col=k=> k==='custom' ? {n:'Custom',hex:S.custom.hex,op:S.custom.op} : (COLORS[k]||COLORS.clear);
 const DEFAULT = {
   body:'bubble',
   profile:[[0,0],[.6,.02],[.92,.3],[.88,.72],[.5,1.08],[.16,1.32],[.04,1.55]],
   flatten:1, square:0,
   donut:{R:.62,tube:.42,tall:1.08,flatten:.32,neckH:.55,neckW:.42},
   bits:{count:0,mode:'ring',shape:'spike',at:.8,from:.3,to:.7,len:.5,size:.12,curl:0},
-  color:'clear', wraps:0, wrapColor:'opal',
+  color:'clear', wraps:0, wrapColor:'opal', custom:{hex:'#4a90c2',op:.5},
   open:{cut:0,tilt:0,turn:0,lip:'fire'},
   jaw:{on:false,at:.18,around:180,len:.45,size:.17,square:0,hollow:false},
   curl:{spine:null,width:1.3,flat:.5},
@@ -286,12 +305,12 @@ function bitRadii(){ const b=S.bits;
 }
 function wrapsTex(){
   const c=document.createElement('canvas'); c.width=8; c.height=512; const g=c.getContext('2d');
-  g.fillStyle=COLORS[S.color].hex; g.fillRect(0,0,8,512); g.fillStyle=COLORS[S.wrapColor].hex;
+  g.fillStyle=col(S.color).hex; g.fillRect(0,0,8,512); g.fillStyle=col(S.wrapColor).hex;
   const n=S.wraps; for(let i=0;i<n;i++){ const v=0.1+0.8*(i+0.5)/n; g.fillRect(0,512*(1-v)-4,8,8); }
   const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t;
 }
 function makeMat(){
-  const c=COLORS[S.color], useMap=S.wraps>0;
+  const c=col(S.color), useMap=S.wraps>0;
   const op = useMap ? Math.max(c.op,.55) : c.op;
   return new THREE.MeshPhysicalMaterial({
     color: useMap?0xffffff:new THREE.Color(c.hex), map: useMap?wrapsTex():null,
@@ -488,7 +507,7 @@ function restAngle(bodyG,jawG,axis){
   for(let i=0;i<40;i++){ const m=(a+b)/2, fm=f(m); if(fa*fm<=0) b=m; else { a=m; fa=fm; } }
   return (a+b)/2;
 }
-function groundMat(){ const c=COLORS[S.color];
+function groundMat(){ const c=col(S.color);
   return new THREE.MeshPhysicalMaterial({color:new THREE.Color(c.hex).lerp(new THREE.Color(0xffffff),.55),
     roughness:.65, metalness:0, transparent:true, opacity:Math.min(1,c.op+.35), side:THREE.DoubleSide}); }
 // loop: closed ring of rim points; n: direction the mouth faces
@@ -622,9 +641,21 @@ function seg(label,opts,get,set,after){
     h('div',{class:'seg',role:'group','aria-label':label}, opts.map(([v,t])=>h('button',{type:'button','aria-pressed':String(get()===v),text:t,onclick:()=>{set(v); if(after) after(); else {schedule(); render();}}}))));
 }
 function swatches(get,set){
-  return h('div',{class:'swatches'}, Object.entries(COLORS).map(([k,c])=>{
-    const i=h('i'); i.style.background=c.hex; i.style.opacity=Math.max(c.op,.45);
-    return h('button',{class:'sw','aria-pressed':String(get()===k),onclick:()=>{set(k); schedule(); render();}}, i, c.n); }));
+  const sw=(k,c)=>{ const i=h('i'); i.style.background=c.hex; i.style.opacity=Math.max(c.op,.45); if(k==='custom') i.className='sw-custom';
+    return h('button',{class:'sw','aria-pressed':String(get()===k),onclick:()=>{set(k); schedule(); render();}}, i, c.n); };
+  const all=Object.entries(COLORS);
+  return h('div',{},
+    h('span',{class:'sw-group',text:'Transparent'}), h('div',{class:'swatches'}, all.filter(([,c])=>!c.opq).map(([k,c])=>sw(k,c))),
+    h('span',{class:'sw-group',text:'Opaque and opal'}), h('div',{class:'swatches'}, all.filter(([,c])=>c.opq).map(([k,c])=>sw(k,c)), sw('custom',col('custom'))));
+}
+// your own color: pick any color and how see-through it is (shared by the glass and the wraps)
+function customEditor(){
+  const pick=h('input',{type:'color',id:'customHex',value:S.custom.hex});
+  pick.oninput=()=>{ S.custom.hex=pick.value; document.querySelectorAll('.sw-custom').forEach(i=>i.style.background=pick.value); schedule(); };
+  return h('div',{class:'section'}, h('h2',{text:'Custom color'}),
+    h('div',{class:'row check'}, pick, h('label',{for:'customHex',text:'Pick the color'})),
+    slider('How opaque',()=>S.custom.op,v=>{ S.custom.op=v; document.querySelectorAll('.sw-custom').forEach(i=>i.style.opacity=Math.max(v,.45)); },.15,1,.01,
+      v=>v<.7?Math.round(v*100)+'% (transparent)':Math.round(v*100)+'% (opaque)'));
 }
 
 function render(){
@@ -751,7 +782,8 @@ function renderColor(){
   content.append(h('span',{class:'seg-label',text:'Glass color'}), swatches(()=>S.color,v=>S.color=v),
     slider('Color wraps',()=>S.wraps,v=>S.wraps=v,0,16,1,v=>v<1?'none':String(v), ()=>{schedule(); if((S.wraps>0)!==hadWraps) render();}));
   var hadWraps=S.wraps>0;
-  if(S.wraps>0) content.append(h('span',{class:'seg-label',text:'Wrap color'}), swatches(()=>S.wrapColor,v=>S.wrapColor=v));
+  if(S.wraps>0) content.append(h('div',{class:'section'}, h('h2',{text:'Wrap color'}), swatches(()=>S.wrapColor,v=>S.wrapColor=v)));
+  if(S.color==='custom' || (S.wraps>0 && S.wrapColor==='custom')) content.append(customEditor());
 }
 
 /* deleting points: the editor on screen sets peDelete (and keeps the button's enabled state);
@@ -915,7 +947,7 @@ function outlineCell(cam){
   meshes.forEach(m=>m.material=nm); const nrm=read();
   meshes.forEach((m,i)=>m.material=orig[i]); idMats.forEach(m=>m.dispose()); nm.dispose(); rt.dispose();
 
-  const img=new ImageData(CELL,CELL), o=img.data, tint=new THREE.Color(COLORS[S.color].hex);
+  const img=new ImageData(CELL,CELL), o=img.data, tint=new THREE.Color(col(S.color).hex);
   const tr=Math.round(tint.r*255), tg=Math.round(tint.g*255), tb=Math.round(tint.b*255);
   const px=(x,y)=>((CELL-1-y)*CELL+x)*4; // GL rows run bottom-up
   const dot=(i,j)=>{ let s=0; for(let c=0;c<3;c++) s+=(nrm[i+c]/127.5-1)*(nrm[j+c]/127.5-1); return s; };
@@ -965,7 +997,7 @@ async function makeSheet(){
   g.fillStyle=INK; g.textBaseline='alphabetic';
   g.font='750 40px "Bricolage Grotesque",system-ui,sans-serif'; g.fillText('Glass Sketchbook',M,M+12);
   g.font='400 22px "Bricolage Grotesque",system-ui,sans-serif'; g.fillStyle=FAINT;
-  const desc=[{bubble:'Blown bubble',donut:'Blown donut',curl:'Solid curl'}[S.body], COLORS[S.color].n+' glass', per?'height '+fmt(size.y):'unscaled'];
+  const desc=[{bubble:'Blown bubble',donut:'Blown donut',curl:'Solid curl'}[S.body], col(S.color).n+' glass', per?'height '+fmt(size.y):'unscaled'];
   g.fillText('Orthographic views · '+desc.join(' · '),M,M+48);
   g.textAlign='right'; g.fillText(new Date().toLocaleDateString(),W-M,M+12); g.textAlign='left';
 
